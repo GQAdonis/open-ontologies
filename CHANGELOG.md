@@ -6,6 +6,8 @@ All notable changes to Open Ontologies are documented here.
 
 ### Fixed
 
+- Python: serialize RDF triple-term values in SELECT, CONSTRUCT and DESCRIBE query results instead of raising `AttributeError`; ordinary scalar values remain unchanged.
+
 - Keep the last active ontology intact when parsing a replacement source, cache, or refresh fails; publish successful replacements in one graph transaction.
 - Bound wildcard repository filtering to pattern/filename pairs so repeated stars cannot stall `onto_repo_list`.
 - Sanitize quotes and ASCII control bytes in mapped IRI components so valid structured data does not fail RDF ingestion.
