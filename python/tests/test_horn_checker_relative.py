@@ -1,11 +1,15 @@
 """The executable we locate must be the executable we launch."""
 import sys
 import pytest
+from open_ontologies_lite.horn import certify
 from open_ontologies_lite.horn.certify import check_horn, find_checker
 
 @pytest.mark.parametrize("source", ["explicit", "environment", "path", "absolute"])
 def test_located_checker_executes_from_selected_location(tmp_path, monkeypatch, source):
     monkeypatch.chdir(tmp_path)
+    # PATH is lower priority than a built repository checker. Isolate discovery
+    # so this transport fixture does not accidentally invoke the real Lean binary.
+    monkeypatch.setattr(certify, "_repo_candidate", lambda name: None)
     binary = tmp_path / "oo-horn"
     try:
         binary.symlink_to(sys.executable)
