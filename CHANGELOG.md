@@ -8,6 +8,28 @@ All notable changes to Open Ontologies are documented here.
 
 - Python: keep anonymous blank-node identities stable when diffing identical RDF text in `OntologyEngine.diff` and `kgcl_diff`; identical inputs remain parsed and validated.
 
+- **`owl-dl` classifies Pizza exactly as HermiT does, and says when it is not
+  complete.** On the canonical `pizza.owl` it returned no subsumptions and 143
+  undetermined classes; it now returns HermiT 1.4.3's 500 subsumptions and its
+  two unsatisfiable classes, none wrong. The changes, each measured against
+  HermiT: absorption of non-atomic left-hand sides (domains, `∀r⁻` rules,
+  binary rules), dependency-directed backjumping, subsumers read off each
+  class's satisfiability model instead of one tableau per pair of classes,
+  `owl:disjointWith` absorbed as `A ⊓ B ⊑ ⊥` (disjointness with `owl:Thing`
+  never fired before), anywhere blocking, and parsing of `owl:AllDisjointClasses`,
+  `owl:disjointUnionOf` and `owl:equivalentProperty`, which were skipped in
+  silence. Over 120 ORE 2015 files across the `el`, `dl` and `pure_dl` tracks
+  there is no wrong subsumption and no wrong unsatisfiability claim.
+- An unrecognised restriction such as `owl:hasSelf` was read as `⊤`, so
+  `Narcissist ≡ ∃loves.Self` made every class a subclass of `Narcissist`. It
+  is now an opaque name, which is sound in both positions.
+- A subsumption test that ran out of budget was dropped as if refuted, and the
+  run still reported `complete: true`; it is now counted in
+  `subsumption_agent.undetermined` and named in `budget_exhausted_in`.
+- `complete` now requires that every axiom was modelled. Each `owl-dl` run
+  reports `search_finished` and `constructs_not_modelled`, which now include
+  `owl:hasSelf`, property disjointness, `owl:AllDifferent` and restrictions on
+  datatype properties.
 - Keep the last active ontology intact when parsing a replacement source, cache, or refresh fails; publish successful replacements in one graph transaction.
 - Bound wildcard repository filtering to pattern/filename pairs so repeated stars cannot stall `onto_repo_list`.
 - Sanitize quotes and ASCII control bytes in mapped IRI components so valid structured data does not fail RDF ingestion.
@@ -18,6 +40,20 @@ All notable changes to Open Ontologies are documented here.
 - Load crosswalk Parquet string columns with either Utf8 or LargeUtf8 offsets, including mixed schemas, so valid rows are not silently discarded.
 
 ### Added
+
+- **OWL 2 functional syntax loads, whatever the file is called.** `src/ofn.rs`
+  reads OFN into exactly the triples the W3C "OWL 2 Mapping to RDF Graphs"
+  assigns it, and every path that reads a file reaches it: `load`, `validate`,
+  `convert`, `lint`, `batch`, `onto_load` with its compile cache,
+  `onto_validate` and `onto_convert`. A document is OFN when its first token is
+  `Prefix(` or `Ontology(`, so the ORE 2015 reasoner-competition corpus, 1,920
+  OFN files published as `.owl` that all died in the RDF/XML parser, now loads,
+  and `.ofn` is accepted by name. A construct the reader does not translate
+  fails the whole document by name, count and first line, never a silent drop.
+  SWRL `DLSafeRule`s become the `swrl:` vocabulary `onto_rules_import` already
+  reads. Checked against OWL API 4.5.29 on 93 ORE files across the `dl`, `el`
+  and `pure_dl` tracks: all 93 agree once seven documented OWL API habits are
+  undone, and none of the seven is a defect in either reader.
 
 - **A named profile hands a client one job's worth of the tool surface** (#263).
   A client aligning two vocabularies has no use for most of what this server
