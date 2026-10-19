@@ -6,7 +6,60 @@ All notable changes to Open Ontologies are documented here.
 
 ### Fixed
 
+- **`owl-dl` classifies Pizza exactly as HermiT does, and says when it is not
+  complete.** On the canonical `pizza.owl` it returned no subsumptions and 143
+  undetermined classes; it now returns HermiT 1.4.3's 500 subsumptions and its
+  two unsatisfiable classes, none wrong. The changes, each measured against
+  HermiT: absorption of non-atomic left-hand sides (domains, `∀r⁻` rules,
+  binary rules), dependency-directed backjumping, subsumers read off each
+  class's satisfiability model instead of one tableau per pair of classes,
+  `owl:disjointWith` absorbed as `A ⊓ B ⊑ ⊥` (disjointness with `owl:Thing`
+  never fired before), anywhere blocking, and parsing of `owl:AllDisjointClasses`,
+  `owl:disjointUnionOf` and `owl:equivalentProperty`, which were skipped in
+  silence. Over 120 ORE 2015 files across the `el`, `dl` and `pure_dl` tracks
+  there is no wrong subsumption and no wrong unsatisfiability claim.
+- An unrecognised restriction such as `owl:hasSelf` was read as `⊤`, so
+  `Narcissist ≡ ∃loves.Self` made every class a subclass of `Narcissist`. It
+  is now an opaque name, which is sound in both positions.
+- A subsumption test that ran out of budget was dropped as if refuted, and the
+  run still reported `complete: true`; it is now counted in
+  `subsumption_agent.undetermined` and named in `budget_exhausted_in`.
+- `complete` now requires that every axiom was modelled. Each `owl-dl` run
+  reports `search_finished` and `constructs_not_modelled`, which now include
+  `owl:hasSelf`, property disjointness, `owl:AllDifferent` and restrictions on
+  datatype properties.
+- **`align` reads SKOS.** It read `owl:Class` only, so a pure SKOS taxonomy
+  produced zero candidates and said nothing about why. A `skos:Concept` is now
+  aligned with its preferred, alternative and hidden labels, its
+  `skos:broader`/`skos:broaderTransitive` parents, and its `skos:definition`
+  shown to the reviewer. An entity that is also an `owl:Class` is read as
+  before.
+- **A perfect name no longer caps at 0.85, and agreement no longer costs
+  confidence.** The weighted sum now averages over the signals that carry
+  evidence for the pair (`informative_signals`, `evidence_coverage`), and a
+  structural signal counts as support when the two sides share a feature the
+  other can name. The old fusion is `--scoring legacy` and reproduces the
+  published OAEI Anatomy figure byte for byte; the new default scores F1 0.833
+  there at the equivalent threshold. The default auto-apply threshold is 0.95
+  under the new scoring (0.85 under legacy), the same strictness on each scale.
+- **Ties are reported, never dropped.** A row stable matching kept over an
+  equally scored one names the loser under `tied_with`, is marked `ambiguous`,
+  and goes to review instead of into the graph. `--cardinality many-to-one`
+  keeps several source terms on one coarser target.
+- **`crosswalk-certify` compares only what can be compared.** An ancestor with
+  no counterpart through the mapping, on either side, is a coverage gap named
+  on the row and no longer downgrades it; a SKOS scheme's hierarchy is its
+  `skos:broader` closure, so the check can now fail on SKOS input; a row with
+  nothing to compare is `not_refuted_nothing_compared` rather than upheld; and
+  the SSSOM predicate column never strengthens a claim.
 - Encode literal percent characters in mapped IRI components while preserving valid percent escapes.
+
+### Added
+
+- **`crosswalk-probe`** (CLI subcommand and batch verb): carry a crosswalk's
+  subsumptions into the target and report the clashes they add. Witness
+  individuals make a TBox-only taxonomy able to clash; clashes the target has
+  on its own are reported apart. Exits 1 on a contradiction.
 
 - Keep the last active ontology intact when parsing a replacement source, cache, or refresh fails; publish successful replacements in one graph transaction.
 - Bound wildcard repository filtering to pattern/filename pairs so repeated stars cannot stall `onto_repo_list`.
@@ -18,6 +71,20 @@ All notable changes to Open Ontologies are documented here.
 - Load crosswalk Parquet string columns with either Utf8 or LargeUtf8 offsets, including mixed schemas, so valid rows are not silently discarded.
 
 ### Added
+
+- **OWL 2 functional syntax loads, whatever the file is called.** `src/ofn.rs`
+  reads OFN into exactly the triples the W3C "OWL 2 Mapping to RDF Graphs"
+  assigns it, and every path that reads a file reaches it: `load`, `validate`,
+  `convert`, `lint`, `batch`, `onto_load` with its compile cache,
+  `onto_validate` and `onto_convert`. A document is OFN when its first token is
+  `Prefix(` or `Ontology(`, so the ORE 2015 reasoner-competition corpus, 1,920
+  OFN files published as `.owl` that all died in the RDF/XML parser, now loads,
+  and `.ofn` is accepted by name. A construct the reader does not translate
+  fails the whole document by name, count and first line, never a silent drop.
+  SWRL `DLSafeRule`s become the `swrl:` vocabulary `onto_rules_import` already
+  reads. Checked against OWL API 4.5.29 on 93 ORE files across the `dl`, `el`
+  and `pure_dl` tracks: all 93 agree once seven documented OWL API habits are
+  undone, and none of the seven is a defect in either reader.
 
 - **A named profile hands a client one job's worth of the tool surface** (#263).
   A client aligning two vocabularies has no use for most of what this server

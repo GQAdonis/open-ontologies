@@ -59,7 +59,7 @@ Claude dynamically decides the next tool call based on what the previous tool re
 | `onto_query` | To verify structure, answer competency questions, explore the ontology |
 | `onto_diff` | To compare against a reference or previous version |
 | `onto_save` | To persist the ontology to a file |
-| `onto_convert` | To convert between formats (Turtle, N-Triples, RDF/XML, N-Quads, TriG) |
+| `onto_convert` | To convert between formats (reads Turtle, N-Triples, RDF/XML, N-Quads, TriG, JSON-LD and OWL 2 functional syntax; writes the first five) |
 | `onto_clear` | To reset the store before loading a different ontology |
 | `onto_marketplace` | To browse and install ontologies: 33 curated W3C/ISO/industry standards plus community packs from the open registry (`community/registry.json`, fetched at runtime; `community=false` for curated/offline only). Curated IDs always win over community IDs |
 | `onto_plugin_list` | To discover installed WASM plugins (community `.wasm` tools in `~/.open-ontologies/plugins` or `./plugins`) and the tools each declares. Requires a build with `--features plugins` |
@@ -98,7 +98,7 @@ Claude dynamically decides the next tool call based on what the previous tool re
 | `onto_crosswalk` | To look up clinical terminology mappings (ICD-10 ↔ SNOMED ↔ MeSH) |
 | `onto_enrich` | To add skos:exactMatch triples linking classes to clinical codes |
 | `onto_validate_clinical` | To check class labels against clinical crosswalk terminology |
-| `onto_align` | To detect alignment candidates (equivalentClass, exactMatch, subClassOf) between two ontologies using 7 weighted signals (6 structural + embedding similarity when embeddings are loaded). Labels are matched with their parsed BCP-47 language tag; with the multilingual embedder loaded, cross-lingual pairs that share no surface tokens (e.g. `Dog`↔`Chien`) are admitted via the embedding signal. Restrict the languages consulted with `[language] preferred = [...]` / `OPEN_ONTOLOGIES_LANGUAGES` (empty = all) |
+| `onto_align` | To detect alignment candidates (equivalentClass, exactMatch, subClassOf) between two ontologies or SKOS vocabularies (`owl:Class` and `skos:Concept`; a concept's names include `skos:hiddenLabel` and its parents are `skos:broader`) using 7 weighted signals (6 structural + embedding similarity when embeddings are loaded). Confidence is the weighted mean over the signals that count for the pair, named in `informative_signals` (`scoring: "legacy"` reproduces the published OAEI figures). `cardinality: "many-to-one"` keeps several source terms on one target; a tie is reported under `tied_with`, marked `ambiguous` and sent to review, never dropped. Labels are matched with their parsed BCP-47 language tag; with the multilingual embedder loaded, cross-lingual pairs that share no surface tokens (e.g. `Dog`↔`Chien`) are admitted via the embedding signal. Restrict the languages consulted with `[language] preferred = [...]` / `OPEN_ONTOLOGIES_LANGUAGES` (empty = all) |
 | `onto_align_feedback` | To accept/reject alignment candidates for self-calibrating confidence weights |
 | `onto_communities` | To cluster the entity graph and get a SKELETON per community (size, top members by degree, internal relations, bridges to other communities). Deterministic modularity optimisation, no model involved. Write one report per skeleton, then answer corpus-wide questions ("what are the themes", "summarise this corpus") from the reports instead of traversing from an anchor entity, which such questions do not have. The GraphRAG global-search pattern with the expensive half left to the orchestrator |
 | `onto_support_check` | To check whether claims are backed by the sources they cite. Returns which claims cite NO source (computed) and, for the rest, verification TASKS: the claim as a sentence, the source, what to decide. Complements `onto_vocab_check`: conformance asks whether a claim is expressible, support asks whether it is true to its source, and a claim can fail either independently |
@@ -234,7 +234,7 @@ preferred = []
 
 `onto_align` partitions candidates into three buckets by confidence:
 
-- `auto_applied`: confidence ≥ `high_threshold` (default 0.85) — applied as triples
+- `auto_applied`: confidence ≥ `high_threshold` (default 0.95; 0.85 under `scoring: "legacy"`, the same strictness on that scale) and not ambiguous — applied as triples
 - `borderline`: confidence in [`low_threshold`, `high_threshold`) (default low 0.4) — surfaced with rich `context` (source/target labels, source/target parents) for review
 - below `low_threshold`: dropped
 

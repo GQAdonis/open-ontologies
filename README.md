@@ -66,7 +66,7 @@
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/fabio-rovai/open-ontologies/main/docs/assets/hqdm-audit.svg" alt="HQDM as two shipped files side by side. Left, the RDFS rendering: 23 terms used as a class but never declared drawn as hollow red rings and 12 rdfs:range declarations naming a relation drawn as red edges. Right, the OWL rendering: 195 named classes this engine found satisfiable, 39 it could not decide drawn amber, and a red ring on the 39 of those that HermiT calls unsatisfiable." width="100%">
+  <img src="https://raw.githubusercontent.com/fabio-rovai/open-ontologies/main/docs/assets/hqdm-audit.svg" alt="HQDM as two shipped files side by side. Left, the RDFS rendering: 23 terms used as a class but never declared drawn as hollow red rings and 12 rdfs:range declarations naming a relation drawn as red edges. Right, the OWL rendering: 190 named classes this engine found satisfiable and 39 it found unsatisfiable drawn red, with a red ring on the 39 that HermiT calls unsatisfiable, the same 39." width="100%">
 </p>
 
 <p align="center">
@@ -78,8 +78,8 @@
   <b>12</b> <code>rdfs:range</code> declarations that name a relation and not a class. It also has <b>13</b>
   pairs of names that differ by one final underscore. Three of those pairs have the same domain and the
   same range. The OWL file passes all three checks, and the OWL file is not coherent. The tableaux of
-  this engine finds <b>195</b> of its named classes satisfiable. The tableaux cannot decide <b>39</b>.
-  HermiT calls exactly those <b>39</b> unsatisfiable, and HermiT is an opinion in the vocabulary of this
+  this engine finds <b>190</b> of its named classes satisfiable. The tableaux finds <b>39</b> unsatisfiable.
+  HermiT calls the same <b>39</b> unsatisfiable, and HermiT is an opinion in the vocabulary of this
   repository. This figure proves nothing, and the figure does not claim a proof. A test computes each
   count again, and the test also computes that intersection. For the source and the method, read
   <a href="docs/assets/hqdm/PROVENANCE.md"><code>docs/assets/hqdm/PROVENANCE.md</code></a>.</sub>
@@ -337,14 +337,17 @@ A crosswalk states a match type. Nothing checked that statement. The engine now 
 
 An `exactMatch` that the entailments do not support comes back downgraded. The report gives the reason. It also names every term the crosswalk does not carry. That second list is the one that disappears from most crosswalk files. The output is valid SSSOM, so your tools read it today.
 
-A second question is sharper than a downgrade. The engine carries the translated claims into the target and reasons again. A clash means the target denies what the mapping carried in. That is a disagreement, and a person must settle it.
+The check compares where two terms sit in their hierarchies. It does not compare what the terms mean. Two sibling terms under one mapped parent look the same to it. So it can refute a match type, and it never makes a claim stronger. A parent that the mapping does not carry is a gap, and the report names it. A row with nothing to compare says so and is not certified.
+
+A second question is sharper than a downgrade. The engine carries the translated claims into the target and reasons again. A clash means the target denies what the mapping carried in. That is a disagreement, and a person must settle it. Run it with `crosswalk-probe`.
 
 Contexts can disagree. Birds fly. Penguins are birds, and penguins do not fly. One graph that holds both is inconsistent, and this engine finds the clash. Each module reasons alone instead. A fact earns "true everywhere" when k modules of n entail it.
 
 A number can now carry a certificate. `oo-matcert` recomputes a matrix product from the definition. It prints `MatCert.mul_of_check` when it accepts. Integers only, and that is the condition for the sentence to hold. Freivalds costs less and gives a probability, so it stays an opinion with its bound printed. Floating point reports a tolerance, because a proof over the real numbers says nothing about IEEE-754.
 
 ```bash
-open-ontologies batch plan.json   # crosswalk-certify, modules --threshold k, matcert
+open-ontologies batch plan.json   # crosswalk-certify, crosswalk-probe, modules --threshold k, matcert
+open-ontologies crosswalk-probe source.ttl target.ttl mapping.tsv   # exits 1 on a clash
 ```
 
 ## What the tool proves

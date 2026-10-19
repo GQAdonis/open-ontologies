@@ -322,7 +322,7 @@ impl OpenOntologiesServer {
 
     // ── Ontology ────────────────────────────────────────────────────────────
 
-    #[tool(name = "onto_validate", description = "Validate RDF/OWL syntax. Accepts a file path or inline Turtle content.")]
+    #[tool(name = "onto_validate", description = "Validate RDF/OWL syntax. Accepts a file path or inline content. A file may be Turtle, N-Triples, RDF/XML, N-Quads, TriG, JSON-LD or OWL 2 functional syntax (OFN), and the content is sniffed before the extension is trusted, so an OFN document published as `.owl` is read as OFN. Inline content is Turtle unless it opens with `Prefix(` or `Ontology(`, in which case it is OFN. An OFN construct the reader does not translate is an error naming the construct, its count and its first line, never a silent drop.")]
     async fn onto_validate(&self, Parameters(input): Parameters<OntoValidateInput>) -> String {
         use crate::ontology::OntologyService;
         if input.inline.unwrap_or(false) {
@@ -332,7 +332,7 @@ impl OpenOntologiesServer {
         }
     }
 
-    #[tool(name = "onto_convert", description = "Convert an RDF file between formats: turtle, ntriples, rdfxml, nquads, trig")]
+    #[tool(name = "onto_convert", description = "Convert an ontology file to turtle, ntriples, rdfxml, nquads or trig. Reads every format onto_load reads, OWL 2 functional syntax (OFN) included, so this is also the way to turn an OFN document into RDF.")]
     async fn onto_convert(&self, Parameters(input): Parameters<OntoConvertInput>) -> String {
         let store = GraphStore::new();
         match store.load_file(&input.path) {
@@ -355,7 +355,7 @@ impl OpenOntologiesServer {
         }
     }
 
-    #[tool(name = "onto_load", description = "Load an RDF file or inline Turtle content into the in-memory ontology store. When given a file path, the parsed graph is also written to a fast N-Triples compile cache (in `[cache] dir`) so subsequent loads from the same source skip parsing. Optional `name`, `auto_refresh`, and `force_recompile` flags control caching/refresh behavior.")]
+    #[tool(name = "onto_load", description = "Load an ontology file or inline Turtle content into the in-memory ontology store. A file may be Turtle, N-Triples, RDF/XML, N-Quads, TriG, JSON-LD or OWL 2 functional syntax (OFN, `.ofn`, or any extension whose content opens with `Prefix(` or `Ontology(`, which covers OFN published as `.owl`); OFN is translated to the RDF graph the W3C OWL 2 mapping assigns it, and a construct the reader does not translate fails the load by name rather than being dropped. When given a file path, the parsed graph is also written to a fast N-Triples compile cache (in `[cache] dir`) so subsequent loads from the same source skip parsing. Optional `name`, `auto_refresh`, and `force_recompile` flags control caching/refresh behavior.")]
     async fn onto_load(&self, Parameters(input): Parameters<OntoLoadInput>) -> String {
         if let Some(turtle) = input.turtle {
             // Inline turtle bypasses the registry/cache (no source file).
@@ -2969,7 +2969,7 @@ impl OpenOntologiesServer {
         }
     }
 
-    #[tool(name = "onto_align", description = "Detect alignment candidates (owl:equivalentClass, skos:exactMatch, rdfs:subClassOf) between two ontologies using label similarity, property overlap, parent overlap, instance overlap, restriction patterns, and graph neighborhood. Auto-applies high-confidence matches above threshold.")]
+    #[tool(name = "onto_align", description = "Detect alignment candidates (owl:equivalentClass, skos:exactMatch, rdfs:subClassOf) between two ontologies or SKOS vocabularies (owl:Class and skos:Concept) using label similarity, property overlap, parent overlap, instance overlap, restriction patterns, and graph neighborhood. Confidence is the weighted mean over the signals that carry evidence for the pair (`scoring`: informative, or legacy for the published OAEI figures). `cardinality`: one-to-one or many-to-one. Ties are reported under `tied_with` and never auto-applied. Auto-applies high-confidence matches above threshold.")]
     async fn onto_align(&self, Parameters(input): Parameters<OntoAlignInput>) -> String {
         let engine = crate::align::AlignmentEngine::new(self.db.clone(), self.graph.clone());
 
@@ -2998,20 +2998,46 @@ impl OpenOntologiesServer {
             None => None,
         };
 
-        let high = input.high_threshold.or(input.min_confidence).unwrap_or(0.85);
+        let dry_run = input.dry_run.unwrap_or(false);
+        let fusion = input.fusion.as_deref().unwrap_or("weighted_sum");
+        let scoring = match crate::align::Scoring::parse(input.scoring.as_deref().unwrap_or("informative")) {
+            Ok(s) => s,
+            Err(e) => return Self::err_json(e),
+        };
+        let high = input
+            .high_threshold
+            .or(input.min_confidence)
+            .unwrap_or_else(|| scoring.default_high_threshold());
         // Default low_threshold = 0.4 surfaces a borderline bucket for LLM-orchestrated review.
         // Callers wanting the old strict behaviour pass low_threshold == high_threshold.
         let low = input.low_threshold.unwrap_or(0.4).min(high);
-        let dry_run = input.dry_run.unwrap_or(false);
-        let fusion = input.fusion.as_deref().unwrap_or("weighted_sum");
+        let cardinality = match crate::align::Cardinality::parse(input.cardinality.as_deref().unwrap_or("one-to-one")) {
+            Ok(c) => c,
+            Err(e) => return Self::err_json(e),
+        };
+        let opts = crate::align::AlignOptions {
+            high_threshold: high,
+            low_threshold: low,
+            dry_run,
+            fusion: fusion.to_string(),
+            scoring,
+            cardinality,
+        };
 
-        match engine.align_with_fusion(&source, target.as_deref(), high, low, dry_run, fusion) {
+        match engine.align_with_options(&source, target.as_deref(), &opts) {
             Ok(result) => {
                 self.lineage().record(
                     &self.session_id,
                     "AL",
                     "align",
-                    &format!("high={},low={},fusion={}", high, low, fusion),
+                    &format!(
+                        "high={},low={},fusion={},scoring={},cardinality={}",
+                        high,
+                        low,
+                        fusion,
+                        scoring.as_str(),
+                        cardinality.as_str()
+                    ),
                 );
                 result
             }
