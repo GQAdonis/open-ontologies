@@ -6,6 +6,19 @@ All notable changes to Open Ontologies are documented here.
 
 ### Fixed
 
+- **A module that skipped at collection did not fail the strict Python leg.**
+  The entry that added `python/tests/conftest.py` says collection-time skips
+  "are caught too, through `pytest_collectreport`". They were seen and not
+  failed: the hook rewrote `report.outcome`, and that never reached the exit
+  status. MEASURED on pytest 9.0.3 and 9.1.1, under `OO_REQUIRE_FIXTURES=1`,
+  with one passing test and one module that skips at collection:
+  `1 passed, 1 skipped`, exit 0. Four files in the strict leg skip that way —
+  `test_shacl.py`, `test_shacl_vacuous.py`, `test_align.py` and
+  `test_vocab_check.py` — so the leg stayed green if their extras went missing.
+  The hook now records the skip, and `pytest_sessionfinish` fails the run.
+  `python/tests/test_conftest_collection_skip.py` holds it, with a control run
+  without the variable.
+
 - **`owl-dl` classifies Pizza exactly as HermiT does, and says when it is not
   complete.** On the canonical `pizza.owl` it returned no subsumptions and 143
   undetermined classes; it now returns HermiT 1.4.3's 500 subsumptions and its
