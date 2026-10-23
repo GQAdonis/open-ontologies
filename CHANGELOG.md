@@ -7,6 +7,7 @@ All notable changes to Open Ontologies are documented here.
 ### Fixed
 
 - Preserve carriage returns and CRLF text when importing dataframe rows into the Python engine.
+- Report non-object JSON from a configured Python certificate checker as unchecked instead of raising an attribute error.
 
 - **`owl-dl` classifies Pizza exactly as HermiT does, and says when it is not
   complete.** On the canonical `pizza.owl` it returned no subsumptions and 143
