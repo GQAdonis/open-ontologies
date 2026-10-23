@@ -11,6 +11,7 @@ All notable changes to Open Ontologies are documented here.
 - Preserve RDF literal datatypes when comparing Python KGCL graph changes, while retaining lexical label and annotation values.
 - Python: keep anonymous blank-node identities stable when diffing identical RDF text in `OntologyEngine.diff` and `kgcl_diff`; identical inputs remain parsed and validated.
 - Python: serialize RDF triple-term values in SELECT, CONSTRUCT and DESCRIBE query results instead of raising `AttributeError`; ordinary scalar values remain unchanged.
+- Python: accept reported blank-node graph names when selecting asserted graphs for Horn reasoning; preserve ordinary graph-name forms and inferred-graph refusal.
 
 - **`owl-dl` classifies Pizza exactly as HermiT does, and says when it is not
   complete.** On the canonical `pizza.owl` it returned no subsumptions and 143
