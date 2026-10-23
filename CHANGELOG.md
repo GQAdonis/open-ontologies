@@ -9,6 +9,7 @@ All notable changes to Open Ontologies are documented here.
 - Preserve carriage returns and CRLF text when importing dataframe rows into the Python engine.
 - Report non-object JSON from a configured Python certificate checker as unchecked instead of raising an attribute error.
 - Preserve RDF literal datatypes when comparing Python KGCL graph changes, while retaining lexical label and annotation values.
+- Python: keep anonymous blank-node identities stable when diffing identical RDF text in `OntologyEngine.diff` and `kgcl_diff`; identical inputs remain parsed and validated.
 
 - **`owl-dl` classifies Pizza exactly as HermiT does, and says when it is not
   complete.** On the canonical `pizza.owl` it returned no subsumptions and 143
