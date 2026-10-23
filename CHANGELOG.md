@@ -68,6 +68,7 @@ All notable changes to Open Ontologies are documented here.
 - Render native SELECT rows as tables with `--human`, including empty results, while preserving JSON output and standard SPARQL binding rendering.
 - Reject truncated XML data documents instead of reporting an incomplete prefix as a successful ingestion.
 - Recognize explicitly declared OWL properties in Python statistics and structural lint, without counting property declarations as individuals.
+- Launch explicitly selected and environment-configured certificate checkers by their verified location, including paths relative to the current directory.
 
 - Keep the last active ontology intact when parsing a replacement source, cache, or refresh fails; publish successful replacements in one graph transaction.
 - Bound wildcard repository filtering to pattern/filename pairs so repeated stars cannot stall `onto_repo_list`.
