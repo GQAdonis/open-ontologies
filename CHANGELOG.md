@@ -6,6 +6,13 @@ All notable changes to Open Ontologies are documented here.
 
 ### Fixed
 
+- Preserve carriage returns and CRLF text when importing dataframe rows into the Python engine.
+- Report non-object JSON from a configured Python certificate checker as unchecked instead of raising an attribute error.
+- Preserve RDF literal datatypes when comparing Python KGCL graph changes, while retaining lexical label and annotation values.
+- Python: keep anonymous blank-node identities stable when diffing identical RDF text in `OntologyEngine.diff` and `kgcl_diff`; identical inputs remain parsed and validated.
+- Python: serialize RDF triple-term values in SELECT, CONSTRUCT and DESCRIBE query results instead of raising `AttributeError`; ordinary scalar values remain unchanged.
+- Python: accept reported blank-node graph names when selecting asserted graphs for Horn reasoning; preserve ordinary graph-name forms and inferred-graph refusal.
+
 - **`owl-dl` classifies Pizza exactly as HermiT does, and says when it is not
   complete.** On the canonical `pizza.owl` it returned no subsumptions and 143
   undetermined classes; it now returns HermiT 1.4.3's 500 subsumptions and its
@@ -52,14 +59,14 @@ All notable changes to Open Ontologies are documented here.
   `skos:broader` closure, so the check can now fail on SKOS input; a row with
   nothing to compare is `not_refuted_nothing_compared` rather than upheld; and
   the SSSOM predicate column never strengthens a claim.
-
-### Added
-
-- **`crosswalk-probe`** (CLI subcommand and batch verb): carry a crosswalk's
-  subsumptions into the target and report the clashes they add. Witness
-  individuals make a TBox-only taxonomy able to clash; clashes the target has
-  on its own are reported apart. Exits 1 on a contradiction.
-
+- Encode literal percent characters in mapped IRI components while preserving valid percent escapes.
+- Render native SELECT rows as tables with `--human`, including empty results, while preserving JSON output and standard SPARQL binding rendering.
+- Reject truncated XML data documents instead of reporting an incomplete prefix as a successful ingestion.
+- Recognize explicitly declared OWL properties in Python statistics and structural lint, without counting property declarations as individuals.
+- Launch explicitly selected and environment-configured certificate checkers by their verified location, including paths relative to the current directory.
+- Preserve zero and false RDF literal values and focus nodes in Python SHACL violation reports instead of rendering them as missing fields.
+- Report Python SHACL coverage for property and untyped targeted shapes, using the same inferred graph as validation so actual violations are not replaced by an unmatched-target verdict.
+- Keep Python alignment labels and query counts consistent when HNSW insertion rejects a full index or an invalid numeric vector.
 - Keep the last active ontology intact when parsing a replacement source, cache, or refresh fails; publish successful replacements in one graph transaction.
 - Bound wildcard repository filtering to pattern/filename pairs so repeated stars cannot stall `onto_repo_list`.
 - Sanitize quotes and ASCII control bytes in mapped IRI components so valid structured data does not fail RDF ingestion.
@@ -68,6 +75,13 @@ All notable changes to Open Ontologies are documented here.
   names losslessly; identical stems require distinct base IRIs.
 - Keep original Turtle error line numbers when applying a local document base.
 - Load crosswalk Parquet string columns with either Utf8 or LargeUtf8 offsets, including mixed schemas, so valid rows are not silently discarded.
+
+### Added
+
+- **`crosswalk-probe`** (CLI subcommand and batch verb): carry a crosswalk's
+  subsumptions into the target and report the clashes they add. Witness
+  individuals make a TBox-only taxonomy able to clash; clashes the target has
+  on its own are reported apart. Exits 1 on a contradiction.
 
 ### Added
 
