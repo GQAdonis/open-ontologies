@@ -60,6 +60,7 @@ All notable changes to Open Ontologies are documented here.
   individuals make a TBox-only taxonomy able to clash; clashes the target has
   on its own are reported apart. Exits 1 on a contradiction.
 
+- Render native SELECT rows as tables with `--human`, including empty results, while preserving JSON output and standard SPARQL binding rendering.
 - Keep the last active ontology intact when parsing a replacement source, cache, or refresh fails; publish successful replacements in one graph transaction.
 - Bound wildcard repository filtering to pattern/filename pairs so repeated stars cannot stall `onto_repo_list`.
 - Sanitize quotes and ASCII control bytes in mapped IRI components so valid structured data does not fail RDF ingestion.
