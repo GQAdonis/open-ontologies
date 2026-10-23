@@ -71,6 +71,7 @@ All notable changes to Open Ontologies are documented here.
 - Launch explicitly selected and environment-configured certificate checkers by their verified location, including paths relative to the current directory.
 - Preserve zero and false RDF literal values and focus nodes in Python SHACL violation reports instead of rendering them as missing fields.
 - Report Python SHACL coverage for property and untyped targeted shapes, using the same inferred graph as validation so actual violations are not replaced by an unmatched-target verdict.
+- Keep Python alignment labels and query counts consistent when HNSW insertion rejects a full index or an invalid numeric vector.
 
 - Keep the last active ontology intact when parsing a replacement source, cache, or refresh fails; publish successful replacements in one graph transaction.
 - Bound wildcard repository filtering to pattern/filename pairs so repeated stars cannot stall `onto_repo_list`.
