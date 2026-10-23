@@ -52,6 +52,7 @@ All notable changes to Open Ontologies are documented here.
   `skos:broader` closure, so the check can now fail on SKOS input; a row with
   nothing to compare is `not_refuted_nothing_compared` rather than upheld; and
   the SSSOM predicate column never strengthens a claim.
+- Encode literal percent characters in mapped IRI components while preserving valid percent escapes.
 
 ### Added
 
