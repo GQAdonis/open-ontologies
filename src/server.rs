@@ -2571,6 +2571,11 @@ impl OpenOntologiesServer {
         let threshold = input.rename_threshold.unwrap_or(0.7);
         match format {
             "kgcl" => match detector.detect_kgcl(&input.version_a, &input.version_b, threshold) {
+                Ok(report) if report.approximate_reason.is_some() => Self::err_json(anyhow::anyhow!(
+                    "the drift is approximate and KGCL CNL cannot say so; use format 'json' or \
+                     'kgcl_json', which carry `exact: false` and the reason: {}",
+                    report.approximate_reason.unwrap_or_default()
+                )),
                 Ok(report) => {
                     self.lineage()
                         .record(&self.session_id, "D", "drift", "detected:kgcl");

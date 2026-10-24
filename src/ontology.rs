@@ -60,6 +60,12 @@ impl OntologyService {
     }
 
     /// Diff two ontologies. Returns added/removed triples.
+    ///
+    /// `exact` is false when either snapshot exhausted the RDFC-1.0 budget
+    /// (issue #293). The diff then covers only the triples that mention no
+    /// blank node, `approximate_reason` says why, and `omitted_old` /
+    /// `omitted_new` count the blank-node triples that were not compared, so an
+    /// empty diff over a poisoned input is never mistaken for "no changes".
     pub fn diff(old_content: &str, new_content: &str) -> anyhow::Result<String> {
         let old_raw = GraphStore::new();
         let new_raw = GraphStore::new();
@@ -69,8 +75,7 @@ impl OntologyService {
         // Parse-local blank node IDs are not identity across snapshots.
         // Preserve anonymous structure using the same RDFC 1.0 helper as drift.
         // Canonical IDs can shift under edits; this is not a minimal edit script.
-        let old_store = old_raw.canonicalize_blank_nodes()?;
-        let new_store = new_raw.canonicalize_blank_nodes()?;
+        let (old_store, new_store, approximation) = GraphStore::canonicalize_pair(&old_raw, &new_raw)?;
         let old_triples: HashSet<String> = old_store
             .all_triples()?
             .into_iter()
@@ -85,13 +90,20 @@ impl OntologyService {
         let added: Vec<&String> = new_triples.difference(&old_triples).collect();
         let removed: Vec<&String> = old_triples.difference(&new_triples).collect();
 
-        Ok(serde_json::json!({
+        let mut report = serde_json::json!({
             "added": added.len(),
             "removed": removed.len(),
             "added_triples": added,
             "removed_triples": removed,
-        })
-        .to_string())
+            "exact": approximation.is_none(),
+        });
+        if let Some(a) = approximation {
+            report["approximate_reason"] =
+                serde_json::json!(format!("blank-node triples were not compared: {}", a.reason));
+            report["omitted_old"] = serde_json::json!(a.omitted_old);
+            report["omitted_new"] = serde_json::json!(a.omitted_new);
+        }
+        Ok(report.to_string())
     }
 
     /// Collect raw lint issues from a Store.
