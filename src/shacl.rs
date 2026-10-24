@@ -1134,8 +1134,17 @@ impl ShaclValidator {
                     }));
                     continue;
                 };
-                let q_min = row.get("qmin").and_then(|v| strip_quotes(v).parse::<i64>().ok());
-                let q_max = row.get("qmax").and_then(|v| strip_quotes(v).parse::<i64>().ok());
+                // A malformed qualified bound used to `continue` past the whole
+                // row with no record, so the qualified constraint vanished and
+                // the verdict could still be true (#321). It is now skipped by
+                // name, which nulls the verdict; a well-formed sibling bound on
+                // the same row is still evaluated.
+                let q_min = row
+                    .get("qmin")
+                    .and_then(|v| count_bound(v, "qualifiedMinCount", &shape_iri, Some(&q_path), &mut skipped));
+                let q_max = row
+                    .get("qmax")
+                    .and_then(|v| count_bound(v, "qualifiedMaxCount", &shape_iri, Some(&q_path), &mut skipped));
                 if q_min.is_none() && q_max.is_none() {
                     continue;
                 }
@@ -1152,7 +1161,7 @@ impl ShaclValidator {
                     let (Some(focus), Some(n_raw)) = (result.get("focus"), result.get("n")) else {
                         continue;
                     };
-                    let Ok(n) = strip_quotes(n_raw).parse::<i64>() else {
+                    let Ok(n) = strip_quotes(n_raw).parse::<u64>() else {
                         continue;
                     };
                     for (bound, breached, constraint, wording) in [
@@ -1261,46 +1270,50 @@ impl ShaclValidator {
                     })
                     .unwrap_or_else(|| "Violation".to_string());
 
-                // sh:minCount
-                if let Some(min_count_str) = prop.get("minCount") {
-                    let min_count = strip_quotes(min_count_str)
-                        .parse::<u64>()
-                        .unwrap_or(0);
-                    if min_count > 0 {
-                        let query = format!(
-                            r#"SELECT ?focus (COUNT(DISTINCT ?val) AS ?cnt) WHERE {{
-                                {focus_pattern}
-                                OPTIONAL {{ ?focus {path_expr} ?val }}
-                            }} GROUP BY ?focus HAVING (COUNT(DISTINCT ?val) < {min_count})"#
-                        );
-                        let results = graph_sparql_select(graph, scope, &query)?;
-                        for row in &results {
-                            if let Some(focus) = row.get("focus") {
-                                let msg = if message.is_empty() {
-                                    format!(
-                                        "Property <{}> has fewer than {} values",
-                                        path, min_count
-                                    )
-                                } else {
-                                    message.clone()
-                                };
-                                violations.push(attribute(&constraint_shape, &shape_iri, serde_json::json!({
-                                    "severity": severity,
-                                    "focus_node": strip_angle_brackets(focus),
-                                    "path": path,
-                                    "constraint": "minCount",
-                                    "message": msg,
-                                })));
-                            }
+                // sh:minCount. A bound that is not a non-negative integer is
+                // recorded as skipped, as sh:minLength is. It used to read as 0
+                // through `unwrap_or(0)`, so `sh:minCount "one"` ran no check and
+                // a node with no value came back `conforms: true` (#321).
+                // A bound of 0 holds of every focus node, so no query is run.
+                if let Some(min_count) = prop
+                    .get("minCount")
+                    .and_then(|raw| count_bound(raw, "minCount", &shape_iri, Some(&path), &mut skipped))
+                    .filter(|&n| n > 0)
+                {
+                    let query = format!(
+                        r#"SELECT ?focus (COUNT(DISTINCT ?val) AS ?cnt) WHERE {{
+                            {focus_pattern}
+                            OPTIONAL {{ ?focus {path_expr} ?val }}
+                        }} GROUP BY ?focus HAVING (COUNT(DISTINCT ?val) < {min_count})"#
+                    );
+                    let results = graph_sparql_select(graph, scope, &query)?;
+                    for row in &results {
+                        if let Some(focus) = row.get("focus") {
+                            let msg = if message.is_empty() {
+                                format!(
+                                    "Property <{}> has fewer than {} values",
+                                    path, min_count
+                                )
+                            } else {
+                                message.clone()
+                            };
+                            violations.push(attribute(&constraint_shape, &shape_iri, serde_json::json!({
+                                "severity": severity,
+                                "focus_node": strip_angle_brackets(focus),
+                                "path": path,
+                                "constraint": "minCount",
+                                "message": msg,
+                            })));
                         }
                     }
                 }
 
-                // sh:maxCount
-                if let Some(max_count_str) = prop.get("maxCount") {
-                    let max_count = strip_quotes(max_count_str)
-                        .parse::<u64>()
-                        .unwrap_or(u64::MAX);
+                // sh:maxCount. The old fallback was `u64::MAX`, a bound no count
+                // reaches, so `sh:maxCount -1` never fired (#321).
+                if let Some(max_count) = prop
+                    .get("maxCount")
+                    .and_then(|raw| count_bound(raw, "maxCount", &shape_iri, Some(&path), &mut skipped))
+                {
                     let query = format!(
                         r#"SELECT ?focus (COUNT(DISTINCT ?val) AS ?cnt) WHERE {{
                             {focus_pattern}
@@ -2202,7 +2215,10 @@ impl ShaclValidator {
     ///
     /// Verifies that the shapes parse as Turtle and that every IRI they reference
     /// (`sh:targetClass`, `sh:path`, `sh:class`) actually exists in the loaded
-    /// ontology, plus a lightweight XSD-prefix check on `sh:datatype`. Does NOT
+    /// ontology, plus a lightweight XSD-prefix check on `sh:datatype`, and that
+    /// every count and length bound (`sh:minCount`, `sh:maxCount`, the qualified
+    /// pair, `sh:minLength`, `sh:maxLength`) is a non-negative `xsd:integer`
+    /// literal (`kind: "ill_formed_literal"`, with the reason). Does NOT
     /// validate data against the shapes — that's `validate`. This is the primitive
     /// the orchestrating LLM needs to iterate on proposed SHACL before applying.
     ///
@@ -2362,6 +2378,13 @@ impl ShaclValidator {
             }));
         }
 
+        // 3. Count and length literals, over every subject in the shapes graph
+        //    rather than only the shapes walked above, because a malformed
+        //    bound on a shape with no sh:targetClass is just as silent. The
+        //    validator skips such a bound and nulls its verdict (#321); this is
+        //    where the author learns which literal and why before running it.
+        issues.extend(ill_formed_bounds(&shapes_store)?);
+
         let ok = issues.is_empty();
         Ok(serde_json::json!({
             "ok": ok,
@@ -2373,6 +2396,40 @@ impl ShaclValidator {
         })
         .to_string())
     }
+}
+
+/// Every count or length bound in a shapes graph that `count_literal`
+/// rejects, as `check_shapes` issues. Also the verified path's pre-check: see
+/// `shacl_verified::validate_verified`.
+pub(crate) fn ill_formed_bounds(shapes_store: &Store) -> anyhow::Result<Vec<serde_json::Value>> {
+    let rows = query_solutions(
+        shapes_store,
+        r#"
+        PREFIX sh: <http://www.w3.org/ns/shacl#>
+        SELECT ?s ?p ?o WHERE {
+            ?s ?p ?o .
+            FILTER(?p IN (sh:minCount, sh:maxCount, sh:qualifiedMinCount,
+                          sh:qualifiedMaxCount, sh:minLength, sh:maxLength))
+        }
+        "#,
+    )?;
+    let mut issues = Vec::new();
+    for row in &rows {
+        let (Some(subject), Some(pred), Some(obj)) = (row.get("s"), row.get("p"), row.get("o")) else {
+            continue;
+        };
+        if let Err(reason) = count_literal(obj) {
+            let constraint = format!("sh:{}", short_sh(pred));
+            issues.push(serde_json::json!({
+                "shape": strip_angle_brackets(subject),
+                "kind": "ill_formed_literal",
+                "constraint": constraint,
+                "value": obj.trim(),
+                "message": format!("{constraint} {}: {reason}", obj.trim()),
+            }));
+        }
+    }
+    Ok(issues)
 }
 
 /// Run a SPARQL SELECT against a temporary shapes `Store` and return results
@@ -3153,6 +3210,69 @@ fn strip_quotes(s: &str) -> String {
         // return the input untouched, because a caller that parsed a number
         // out of it still needs the quotes gone.
         Err(_) => unescape_literal(s.trim_matches('"')),
+    }
+}
+
+/// Read a cardinality bound (`sh:minCount`, `sh:maxCount` and the qualified
+/// pair), or record it in `skipped` and return None.
+///
+/// "one", `1.0` and `-1` used to parse to a fallback (0, `u64::MAX`) or be
+/// dropped without a trace, and each fallback is a bound no data can breach, so
+/// the constraint disappeared and the shape passed vacuously (#321). The skip
+/// entry uses the `sh:minLength` wording so a reader sees one rule, plus the
+/// specific reason from `count_literal`.
+fn count_bound(
+    raw: &str,
+    constraint: &str,
+    shape_iri: &str,
+    path: Option<&str>,
+    skipped: &mut Vec<serde_json::Value>,
+) -> Option<u64> {
+    let detail = match count_literal(raw) {
+        Ok(n) => return Some(n),
+        Err(detail) => detail,
+    };
+    let mut entry = serde_json::json!({
+        "shape": strip_angle_brackets(shape_iri),
+        "constraint": format!("sh:{constraint}"),
+        "value": raw.trim(),
+        "reason": format!("bound is not a non-negative integer ({detail}); it was not evaluated"),
+    });
+    if let Some(path) = path {
+        entry["path"] = serde_json::json!(path);
+    }
+    skipped.push(entry);
+    None
+}
+
+/// The value of a count or length literal, or why it is ill-formed.
+///
+/// SHACL 4.2.1, 4.2.2, 4.4.1, 4.4.2 and 4.7.3 require these values to be
+/// literals of datatype `xsd:integer`. The datatype is checked, not only the
+/// lexical form, because the store does not keep the lexical form of a
+/// decimal: Turtle `1.0` comes back as `"1"^^xsd:decimal`, which a lexical
+/// parse reads as 1 (measured; the verified evaluator's `readNat` in
+/// `lean/Shacl/Compile.lean` reads only the lexical form and does evaluate it).
+/// A negative value is refused rather than read by the letter of the spec, where
+/// `sh:minCount -1` holds of everything and `sh:maxCount -1` of nothing: no
+/// author means either, and `readNat` refuses it too. Shared by the validator
+/// (`count_bound`) and `check_shapes`, so the dry run reports exactly what the
+/// run would skip.
+fn count_literal(raw: &str) -> Result<u64, String> {
+    const XSD_INTEGER: &str = "http://www.w3.org/2001/XMLSchema#integer";
+    let Ok(Term::Literal(lit)) = raw.trim().parse::<Term>() else {
+        return Err("value is not a literal".to_string());
+    };
+    if lit.datatype().as_str() != XSD_INTEGER {
+        return Err(format!(
+            "value has datatype <{}>; SHACL requires xsd:integer",
+            lit.datatype().as_str()
+        ));
+    }
+    match lit.value().parse::<i128>() {
+        Ok(n) if n < 0 => Err("value is negative; a count or length cannot be".to_string()),
+        Ok(n) => u64::try_from(n).map_err(|_| "value is too large to evaluate".to_string()),
+        Err(_) => Err("value is not a valid xsd:integer".to_string()),
     }
 }
 

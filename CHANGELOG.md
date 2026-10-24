@@ -24,6 +24,31 @@ All notable changes to Open Ontologies are documented here.
   blank-node stars cost 10 s and 1.78 GB to refuse; permutations are now
   generated lazily in the same order, and the same input takes 0.04 s and
   17 MB.
+- **Lint and enforce feedback can no longer waive an error, and never drop an
+  issue without a record** (#325, reported by @noahgift). After
+  `suppress_threshold` dismissals (default 3) an issue was removed whatever its
+  severity, leaving only `suppressed_count`, so the orchestrator that loops
+  until enforce is clean could dismiss an error three times and read
+  "0 violations, 1 suppressed" with no rule, entity or severity anywhere. An
+  `error` is now never suppressed or downgraded (a dismissed one stays in
+  `issues`/`violations` at `error` and carries `dismissals`); a warning or info
+  that reaches the threshold moves to a new `suppressed[]` list with `rule`,
+  `entity`, `original_severity`, `dismissals` and `message`. `issue_count`,
+  `compliance` and `suppressed_count` are computed as before.
+  `tests/feedback_suppression_test.rs` holds it for both tools.
+- **A malformed SHACL count bound no longer turns a shape into a no-op** (#321,
+  reported by @noahgift). `sh:minCount` fell back to 0 and `sh:maxCount` to
+  `u64::MAX` when the bound did not parse, and a bad `sh:qualifiedMinCount` /
+  `sh:qualifiedMaxCount` skipped the row in silence, so `sh:minCount "one"` or
+  `sh:maxCount -1` over a node with no value returned `conforms: true`. All
+  four now go to `skipped_constraints` with the reason, which makes the verdict
+  `conforms: null`, as `sh:minLength` already did. The bound must be a
+  non-negative `xsd:integer` literal: the datatype is checked because the
+  store renders Turtle `1.0` as `"1"^^xsd:decimal`. The verified path
+  (`verified: true`) refuses the same bounds before running `oo-shacl`, whose
+  `readNat` declined "one" and -1 but evaluated `1.0` as 1. `onto_shacl_check`
+  reports every ill-formed count or length literal as `ill_formed_literal`
+  with its reason. `tests/shacl_count_bound_test.rs` holds it.
 
 ## [2.1.0] - 2026-10-23
 
