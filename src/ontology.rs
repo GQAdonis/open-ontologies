@@ -182,7 +182,8 @@ impl OntologyService {
         Ok(issues)
     }
 
-    /// Lint an ontology with feedback-based suppression.
+    /// Lint an ontology with feedback-based suppression (see
+    /// `crate::feedback::apply_feedback` for what suppression may touch).
     pub fn lint_with_feedback(content: &str, db: Option<&crate::state::StateDb>) -> anyhow::Result<String> {
         let store = Store::new()?;
         let reader = Cursor::new(content.as_bytes());
@@ -191,40 +192,15 @@ impl OntologyService {
         }
 
         let raw_issues = Self::collect_lint_issues(&store)?;
-        let mut issues: Vec<serde_json::Value> = Vec::new();
-        let mut suppressed_count: u64 = 0;
+        let (issues, suppressed) = crate::feedback::apply_feedback(db, "lint", "type", raw_issues);
 
-        for issue in raw_issues {
-            if let Some(db) = db {
-                let rule_id = issue["type"].as_str().unwrap_or("");
-                let entity = issue["entity"].as_str().unwrap_or("");
-                match crate::feedback::get_feedback_adjustment(db, "lint", rule_id, entity) {
-                    crate::feedback::FeedbackAction::Suppress => {
-                        suppressed_count += 1;
-                        continue;
-                    }
-                    crate::feedback::FeedbackAction::Downgrade => {
-                        let original = issue["severity"].as_str().unwrap_or("info");
-                        let downgraded = crate::feedback::downgrade_severity(original);
-                        let mut adjusted = issue.clone();
-                        adjusted["original_severity"] = serde_json::json!(original);
-                        adjusted["adjusted_severity"] = serde_json::json!(downgraded);
-                        adjusted["severity"] = serde_json::json!(downgraded);
-                        issues.push(adjusted);
-                    }
-                    crate::feedback::FeedbackAction::Keep => {
-                        issues.push(issue);
-                    }
-                }
-            } else {
-                issues.push(issue);
-            }
-        }
-
+        // `issue_count` stays over `issues` only; `suppressed` lists what
+        // feedback waived so "clean" and "clean after waivers" read apart.
         Ok(serde_json::json!({
             "issues": issues,
             "issue_count": issues.len(),
-            "suppressed_count": suppressed_count,
+            "suppressed_count": suppressed.len(),
+            "suppressed": suppressed,
         })
         .to_string())
     }

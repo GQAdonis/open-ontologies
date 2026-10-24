@@ -145,7 +145,8 @@ data_dir = "~/.open-ontologies"
 
 # [feedback]
 # Lint / enforce self-calibration thresholds (number of dismissals before
-# downgrading then suppressing a (tool, rule_id, entity) triple).
+# downgrading then suppressing a (tool, rule_id, entity) triple). Suppressed
+# issues are listed in the output's `suppressed[]`; errors are never touched.
 # suppress_threshold = 3
 # downgrade_threshold = 2
 

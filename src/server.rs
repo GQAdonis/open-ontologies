@@ -3057,7 +3057,7 @@ impl OpenOntologiesServer {
         }
     }
 
-    #[tool(name = "onto_lint_feedback", description = "Accept or dismiss a lint issue to improve future lint runs. Dismissed issues are suppressed after 3 dismissals. Stores feedback for self-calibrating severity.")]
+    #[tool(name = "onto_lint_feedback", description = "Accept or dismiss a lint issue to improve future lint runs. A warning or info is downgraded after 2 dismissals and suppressed after 3 (configurable in [feedback]); a suppressed issue moves to the suppressed[] list of the lint output with its rule, entity, original severity and dismissal count. Error-severity issues are never downgraded or suppressed. Stores feedback for self-calibrating severity.")]
     async fn onto_lint_feedback(&self, Parameters(input): Parameters<OntoLintFeedbackInput>) -> String {
         match crate::feedback::record_tool_feedback(&self.db, "lint", &input.rule_id, &input.entity, input.accepted) {
             Ok(result) => {
@@ -3068,7 +3068,7 @@ impl OpenOntologiesServer {
         }
     }
 
-    #[tool(name = "onto_enforce_feedback", description = "Accept or dismiss an enforce violation to improve future enforce runs. Dismissed violations are suppressed after 3 dismissals. Stores feedback for self-calibrating compliance.")]
+    #[tool(name = "onto_enforce_feedback", description = "Accept or dismiss an enforce violation to improve future enforce runs. A warning or info is downgraded after 2 dismissals and suppressed after 3 (configurable in [feedback]); a suppressed violation moves to the suppressed[] list of the enforce output with its rule, entity, original severity and dismissal count. Error-severity violations are never downgraded or suppressed. Stores feedback for self-calibrating compliance.")]
     async fn onto_enforce_feedback(&self, Parameters(input): Parameters<OntoEnforceFeedbackInput>) -> String {
         match crate::feedback::record_tool_feedback(&self.db, "enforce", &input.rule_id, &input.entity, input.accepted) {
             Ok(result) => {

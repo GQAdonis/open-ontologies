@@ -4,6 +4,21 @@ All notable changes to Open Ontologies are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Lint and enforce feedback can no longer waive an error, and never drop an
+  issue without a record** (#325, reported by @noahgift). After
+  `suppress_threshold` dismissals (default 3) an issue was removed whatever its
+  severity, leaving only `suppressed_count`, so the orchestrator that loops
+  until enforce is clean could dismiss an error three times and read
+  "0 violations, 1 suppressed" with no rule, entity or severity anywhere. An
+  `error` is now never suppressed or downgraded (a dismissed one stays in
+  `issues`/`violations` at `error` and carries `dismissals`); a warning or info
+  that reaches the threshold moves to a new `suppressed[]` list with `rule`,
+  `entity`, `original_severity`, `dismissals` and `message`. `issue_count`,
+  `compliance` and `suppressed_count` are computed as before.
+  `tests/feedback_suppression_test.rs` holds it for both tools.
+
 ## [2.1.0] - 2026-10-23
 
 ### Fixed
