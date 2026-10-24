@@ -252,14 +252,32 @@ jobs:
   # test that returns early: it reports assurance that did not happen.
   #
   # The oracle exits 1 on a FALSE_CLEAN, meaning we said conforms where pyshacl
-  # said not, which is the one failure this validator must never have. That is
-  # what gates here. Disagreements in the other direction and undetermined
-  # verdicts are printed and uploaded, not failed on, because they are a work
-  # list rather than a defect.
+  # said not, which is the one failure this validator must never have, and on
+  # a planted control it misclassifies. It exits 2, NOT MEASURED, when there is
+  # no oracle, the wrong oracle, nothing discovered, fewer pairs run than
+  # discovered, or no pair compared. Any non-zero exit fails this job.
+  # Disagreements in the other direction and undetermined verdicts are printed
+  # and uploaded, not failed on, because they are a work list rather than a
+  # defect.
+  #
+  # Before #320 the script exited 0 on everything but a FALSE_CLEAN, and this
+  # job was green on a run that compared nothing: measured 24 Oct 2026, the
+  # case-studies corpus yields 4 pairs and all 4 are UNDETERMINED. The W3C suite
+  # is therefore run in the same invocation, where each disagreement is
+  # arbitrated against the Working Group's expected report (73 of 117 pairs
+  # compared on that date).
+  #
+  # pyshacl and rdflib are pinned, and the script refuses (exit 2) any other
+  # pyshacl than PYSHACL_VERSION, because an unpinned oracle makes a pyshacl
+  # release look like a change in this engine. The versions and the sha256 of
+  # every input are in the uploaded JSON.
   shacl-differential:
     timeout-minutes: 30
     name: SHACL differential vs pyshacl
     runs-on: ubuntu-latest
+    env:
+      PYSHACL_VERSION: "0.40.1"
+      RDFLIB_VERSION: "7.6.0"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -276,14 +294,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Install pyshacl
-        run: pip install pyshacl
+      - name: Install the pinned oracle
+        run: pip install "pyshacl==${PYSHACL_VERSION}" "rdflib==${RDFLIB_VERSION}"
       - name: Build the binary the oracle drives
         run: cargo build --release
-      - name: Run the differential over the case-study corpus
+      - name: Run the differential over the case-study corpus and the W3C suite
         run: |
           python3 tools/shacl_differential.py \
             --discover case-studies \
+            --w3c tests/w3c-shacl \
+            --pyshacl-version "${PYSHACL_VERSION}" \
             --json shacl-differential.json
       - name: Upload the report
         if: always()
@@ -417,6 +437,7 @@ jobs:
             tests/test_horn_rule_table.py \
             tests/test_shacl.py \
             tests/test_shacl_vacuous.py \
+            tests/test_shacl_differential_harness.py \
             tests/test_align.py \
             tests/test_vocab_check.py
 

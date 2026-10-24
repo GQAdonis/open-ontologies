@@ -107,6 +107,10 @@
 //!
 //! That figure is for the gated column as it stood before #319, with every
 //! blank source shape collapsed to `_:`; the script still applies that lens.
+//! Per-case arbitration of this engine against pyshacl on the W3C expected
+//! reports, with severity and the re-keyed source shape in the key, is
+//! `tools/shacl_differential.py --w3c tests/w3c-shacl`, which the
+//! `shacl-differential` CI job runs.
 //!
 //! # Four buckets, because this engine has three answers
 //!

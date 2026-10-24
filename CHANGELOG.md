@@ -23,6 +23,23 @@ All notable changes to Open Ontologies are documented here.
   the engine did not read `sh:severity`, had been false since #206 and is gone.
   A planted control mutates one PASS case's expected report in each of the six
   fields and requires each copy to be rejected by name.
+- **`tools/shacl_differential.py` can no longer go green on nothing**
+  (reported by @noahgift in #320). It exited 0 on everything but a FALSE_CLEAN,
+  including no cases, no pyshacl and no comparisons, and the CI job's
+  case-studies corpus yields 4 pairs that all come back UNDETERMINED. It now
+  exits 2 (NOT MEASURED) for a missing or unpinned oracle, a missing engine,
+  empty discovery, fewer pairs run than discovered, or no pair compared; plants
+  a must-agree control and four mutated copies of pyshacl's report on every run
+  and exits 1 if any is misclassified; keys results on (focus, path, severity,
+  source shape, component) instead of (focus, path); records pyshacl, rdflib,
+  the engine binary's sha256 and every input's sha256; and with `--w3c`
+  arbitrates each disagreement against the W3C expected report. CI pins
+  pyshacl 0.40.1 and rdflib 7.6.0 and runs the corpus and the W3C suite
+  together: 117 pairs, 73 compared, 0 blocking, with 12 W3C-confirmed
+  FALSE_CLEANs reported as KNOWN because the conformance ratchet already
+  holds each as FAIL. `tools/fol_differential.py`
+  (every goal undetermined) and `tools/horn_differential.py` (every case not
+  run) had the same exit-0-on-nothing and now exit 2.
 
 ## [2.1.0] - 2026-10-23
 
