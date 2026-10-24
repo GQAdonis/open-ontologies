@@ -4,6 +4,27 @@ All notable changes to Open Ontologies are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`diff` and `drift` no longer hang on a symmetric blank-node graph** (#293).
+  Both canonicalised blank nodes through oxrdf's RDFC-1.0, which sets no limit
+  on `hash_n_degree_quads` calls, so the cost was factorial: a 7-node
+  blank-node clique took 17 to 23 seconds to diff against itself and an 8-node
+  clique was still running when killed at 120 seconds. They now use the
+  repository's own `canon` module, the same Recommendation gated on the W3C
+  suite and bounded by its 4000-call budget; Pizza gets the same canonical
+  labels as before. When either snapshot exhausts the budget, both are cut to
+  the triples that mention no blank node and the report says so: `exact:
+  false`, `approximate_reason`, and the omitted counts (`omitted_old`/
+  `omitted_new` for diff, `omitted_v1`/`omitted_v2` for drift). `kgcl_json`
+  carries the flag; the `kgcl` CNL format cannot, so it refuses an
+  approximate drift and names the formats that can. Every report now carries
+  `exact`, true on ordinary input. `canon` itself built all k! neighbour
+  permutations before its first budget check, so two identical 11-leaf
+  blank-node stars cost 10 s and 1.78 GB to refuse; permutations are now
+  generated lazily in the same order, and the same input takes 0.04 s and
+  17 MB.
+
 ## [2.1.0] - 2026-10-23
 
 ### Fixed
