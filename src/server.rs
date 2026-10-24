@@ -1577,7 +1577,7 @@ impl OpenOntologiesServer {
             .unwrap_or_else(|e| Self::err_json(format!("serialization: {}", e)))
     }
 
-    #[tool(name = "onto_classify_el", description = "Classify the loaded ontology in the OWL-EL fragment (#30). Materialises OWL-RL-ext entailments in a sandbox copy of the graph and emits every distinct subsumption `?sub rdfs:subClassOf ?super` (transitive closure, deduplicated, owl:Thing-trivial pairs removed). For deep SHIQ subsumption, use `onto_dl_check` / `onto_dl_explain`.")]
+    #[tool(name = "onto_classify_el", description = "Classify the loaded ontology by OWL 2 EL completion (#30, #324): conjunction and existentials on both sides, domains, ranges, disjointness, role hierarchy, transitive roles. Returns every derived subsumption between named classes (`owl:Thing` and `X ⊑ X` left out, unsatisfiable classes listed separately), no row cap. `complete: true` only when the input is inside EL and nothing was set aside; otherwise `complete: false`, `incompleteness` names each cause, and the OWL-RL-ext rules are unioned in (sound, not complete). For a complete classification outside EL, use `onto_reason` with `owl-dl`.")]
     async fn onto_classify_el(&self) -> String {
         match crate::classify_el::classify(&self.graph) {
             Ok(r) => serde_json::to_string(&r)
