@@ -4,6 +4,33 @@ All notable changes to Open Ontologies are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- **`onto_shacl` and `shacl` write a W3C `sh:ValidationReport` graph**
+  (#318, reported by @noahgift). `report_format: "turtle" | "ntriples"`
+  (`--report-format` on the CLI) returns the report as RDF, carrying
+  `sh:conforms` and, per result, `sh:focusNode`, `sh:resultPath`, `sh:value`,
+  `sh:sourceShape`, `sh:sourceConstraintComponent`, `sh:resultSeverity` and
+  `sh:resultMessage`; a custom severity IRI and a language-tagged `sh:message`
+  are written as declared. An undetermined run (`conforms: null`) is written
+  `sh:conforms false` plus `oo:undetermined true` and its reason, never
+  `sh:conforms true`, and keeps the results it found. The CLI exit code is
+  still taken from the verdict (0, 1, 2) in every format. JSON stays the
+  default and is unchanged apart from `value`. Measured against the W3C suite:
+  48 of the 56 `core/` cases that pass today produce a report matching the
+  expected one after RDFC-1.0 canonicalisation; the 8 that differ are named in
+  `tests/shacl_validation_report_w3c_test.rs` with their causes, which include
+  an `sh:or` false negative on IRI and ill-typed values.
+
+### Fixed
+
+- **Default-path SHACL results now carry the value node** (#318, reported by
+  @noahgift). The `sh:class`, `sh:datatype`, `sh:nodeKind`, `sh:pattern`,
+  `sh:in`, `sh:or`, `sh:not`, length and range queries selected the offending
+  value and dropped it, so `value` appeared only on `sh:sparql` results. It is
+  now on every result whose query binds it, and on node-shape results as the
+  focus node.
+
 ## [2.1.0] - 2026-10-23
 
 ### Fixed
