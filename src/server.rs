@@ -1368,7 +1368,7 @@ impl OpenOntologiesServer {
         result.to_string()
     }
 
-    #[tool(name = "onto_shacl", description = "Validate the loaded ontology data against SHACL shapes. Checks the core constraint components written under `sh:property`, including `sh:minCount`, `sh:maxCount`, `sh:datatype`, `sh:class`, `sh:nodeKind`, `sh:pattern`, `sh:in`, `sh:hasValue`, `sh:or` and `sh:not`, plus `sh:sparql`. A constraint it cannot execute is listed in `skipped_constraints` and the verdict is null rather than true; that includes a count or length bound that is not a non-negative integer (`sh:minCount \"one\"`, `sh:maxCount -1`), which is never read as 0 or as unbounded. An entry there is one CONSTRAINT-EVALUATION SITE and not one shape: a single `sh:property` block carrying both `sh:minCount` and `sh:node` can produce a violation from the first and a skip entry from the second, so the SAME shape can appear in `violations` and in `skipped_constraints` at once and that is not a contradiction. Every entry names the `shape` it was written on and the `constraint` predicate that was not evaluated, which is what separates a constraint that did not run from one that ran and selected nothing. Returns a conformance report with violations, `focus_nodes` and `unmatched_shapes`, plus `scope`, which names the graphs the run READ. By default every graph in the store is read. Over a store that describes its named graphs with the temporal vocabulary (https://open-ontologies.org/temporal#) that union is a state that held at no instant, so a run with no instant named is REFUSED rather than answered: pass `valid_at` (what was TRUE then), `as_of` (what was KNOWN then) or `all_versions: true` to say the union is what you meant. A scoped run evaluates every data-side query, `sh:sparql` included, against the in-scope named graphs plus the default graph and nothing else. A snapshot that selects no graph returns `conforms: null` with its own reason rather than conforming vacuously. Class and property DECLARATION lookups are never scoped: a declaration is context-free and has the same answer at every instant.")]
+    #[tool(name = "onto_shacl", description = "Validate the loaded ontology data against SHACL shapes. Checks the core constraint components written under `sh:property`, including `sh:minCount`, `sh:maxCount`, `sh:datatype`, `sh:class`, `sh:nodeKind`, `sh:pattern`, `sh:in`, `sh:hasValue`, `sh:or` and `sh:not`, plus `sh:sparql`. A constraint it cannot execute is listed in `skipped_constraints` and the verdict is null rather than true; that includes a count or length bound that is not a non-negative integer (`sh:minCount \"one\"`, `sh:maxCount -1`), which is never read as 0 or as unbounded. An entry there is one CONSTRAINT-EVALUATION SITE and not one shape: a single `sh:property` block carrying both `sh:minCount` and `sh:node` can produce a violation from the first and a skip entry from the second, so the SAME shape can appear in `violations` and in `skipped_constraints` at once and that is not a contradiction. Every entry names the `shape` it was written on and the `constraint` predicate that was not evaluated, which is what separates a constraint that did not run from one that ran and selected nothing. Returns a conformance report with violations, `focus_nodes` and `unmatched_shapes`, plus `scope`, which names the graphs the run READ. By default every graph in the store is read. Over a store that describes its named graphs with the temporal vocabulary (https://open-ontologies.org/temporal#) that union is a state that held at no instant, so a run with no instant named is REFUSED rather than answered: pass `valid_at` (what was TRUE then), `as_of` (what was KNOWN then) or `all_versions: true` to say the union is what you meant. A scoped run evaluates every data-side query, `sh:sparql` included, against the in-scope named graphs plus the default graph and nothing else. A snapshot that selects no graph returns `conforms: null` with its own reason rather than conforming vacuously. Class and property DECLARATION lookups are never scoped: a declaration is context-free and has the same answer at every instant. `report_format: \"turtle\"` or `\"ntriples\"` returns a W3C sh:ValidationReport graph instead of JSON; an undetermined run is written sh:conforms false plus oo:undetermined true, never sh:conforms true.")]
     async fn onto_shacl(&self, Parameters(input): Parameters<OntoShaclInput>) -> String {
         use crate::shacl::ShaclValidator;
         let shapes = if input.inline.unwrap_or(false) {
@@ -1379,7 +1379,20 @@ impl OpenOntologiesServer {
                 Err(e) => return Self::err_json(format!("Cannot read shapes file: {}", e)),
             }
         };
+        let format = match crate::shacl_report::ReportFormat::parse(input.report_format.as_deref()) {
+            Ok(f) => f,
+            Err(e) => return Self::err_json(e),
+        };
         if input.verified.unwrap_or(false) {
+            if format != crate::shacl_report::ReportFormat::Json {
+                return Self::err_json(
+                    "verified: true cannot be combined with a report_format other than json. \
+                     The verified evaluator returns its own report structure, which the \
+                     sh:ValidationReport writer does not read, so the format would be silently \
+                     dropped."
+                        .to_string(),
+                );
+            }
             // Refused rather than ignored. The verified evaluator reads one
             // N-Triples dump of the store and has no notion of a temporal
             // scope, so honouring the argument is impossible and dropping it
@@ -1406,7 +1419,8 @@ impl OpenOntologiesServer {
             Ok(r) => r,
             Err(e) => return Self::err_json(e),
         };
-        ShaclValidator::validate_scoped(&self.graph, &shapes, &request)
+        ShaclValidator::report_scoped(&self.graph, &shapes, &request)
+            .and_then(|report| report.render(format))
             .unwrap_or_else(Self::err_json)
     }
 
