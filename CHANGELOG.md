@@ -4,6 +4,26 @@ All notable changes to Open Ontologies are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The W3C SHACL conformance harness can say no, field by field, and
+  ratchets a second, full-tuple column** (reported by @noahgift in #319). It
+  compared `sh:conforms` and the set of (focus, source shape, component) and
+  collapsed every blank-node source shape to `_:`, so two different property
+  shapes compared equal, and nothing showed the comparison could reject
+  anything. Blank property shapes are now keyed by parent node shape plus
+  `sh:path` (the gated column stays at 61 of 120 PASS). A second column,
+  ratcheted on its own in `tests/w3c_shacl_baseline.json`, compares the
+  multiset of (focus, path, value, source shape, component, severity) with
+  paths compared structurally: 12 of 120 PASS, 48 of the gap being `sh:value`,
+  which the engine does not emit (#318). Severity went into the new column and
+  not the gated one because it drops the gated column from 61 to 60: the
+  engine keeps only the local name of a custom `sh:severity`
+  (`core/misc/severity-002`). The header's reason for ignoring severity, that
+  the engine did not read `sh:severity`, had been false since #206 and is gone.
+  A planted control mutates one PASS case's expected report in each of the six
+  fields and requires each copy to be rejected by name.
+
 ## [2.1.0] - 2026-10-23
 
 ### Fixed

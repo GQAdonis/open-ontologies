@@ -911,10 +911,12 @@ jobs:
   # repository. The two are complementary and neither replaces the other.
   #
   # The gate is monotone, not pass-all: PASS may not drop, FAIL may not rise,
-  # and no named PASS may regress against tests/w3c_shacl_baseline.json. The
-  # engine passes 32 of 120 today and pretending otherwise would be exactly the
-  # silent success this repository keeps finding elsewhere. See the module docs
-  # in tests/w3c_shacl_conformance_test.rs.
+  # and no named PASS may regress against tests/w3c_shacl_baseline.json, in each
+  # of two columns: the (focus, source shape, component) set, 61 of 120 PASS on
+  # 24 Oct 2026, and the full tuple with path, value and severity as a multiset,
+  # 12 of 120 (#319). Pretending otherwise would be exactly the silent success
+  # this repository keeps finding elsewhere. See the module docs in
+  # tests/w3c_shacl_conformance_test.rs.
   #
   # Cheap by construction: no Python, no network, no release build. The suite is
   # vendored under tests/w3c-shacl/ (632 KB, W3C Software and Document License)
