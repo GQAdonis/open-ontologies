@@ -18,6 +18,19 @@ All notable changes to Open Ontologies are documented here.
   `entity`, `original_severity`, `dismissals` and `message`. `issue_count`,
   `compliance` and `suppressed_count` are computed as before.
   `tests/feedback_suppression_test.rs` holds it for both tools.
+- **A malformed SHACL count bound no longer turns a shape into a no-op** (#321,
+  reported by @noahgift). `sh:minCount` fell back to 0 and `sh:maxCount` to
+  `u64::MAX` when the bound did not parse, and a bad `sh:qualifiedMinCount` /
+  `sh:qualifiedMaxCount` skipped the row in silence, so `sh:minCount "one"` or
+  `sh:maxCount -1` over a node with no value returned `conforms: true`. All
+  four now go to `skipped_constraints` with the reason, which makes the verdict
+  `conforms: null`, as `sh:minLength` already did. The bound must be a
+  non-negative `xsd:integer` literal: the datatype is checked because the
+  store renders Turtle `1.0` as `"1"^^xsd:decimal`. The verified path
+  (`verified: true`) refuses the same bounds before running `oo-shacl`, whose
+  `readNat` declined "one" and -1 but evaluated `1.0` as 1. `onto_shacl_check`
+  reports every ill-formed count or length literal as `ill_formed_literal`
+  with its reason. `tests/shacl_count_bound_test.rs` holds it.
 
 ## [2.1.0] - 2026-10-23
 
