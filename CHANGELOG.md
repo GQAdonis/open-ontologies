@@ -70,6 +70,40 @@ All notable changes to Open Ontologies are documented here.
   tableau on 120 generated EL TBoxes (no disagreement; dropping the range
   rule makes it report 6) and against HermiT's
   Pizza classification (every reported pair entailed).
+- **The W3C SHACL conformance harness can say no, field by field, and
+  ratchets a second, full-tuple column** (reported by @noahgift in #319). It
+  compared `sh:conforms` and the set of (focus, source shape, component) and
+  collapsed every blank-node source shape to `_:`, so two different property
+  shapes compared equal, and nothing showed the comparison could reject
+  anything. Blank property shapes are now keyed by parent node shape plus
+  `sh:path` (the gated column stays at 61 of 120 PASS). A second column,
+  ratcheted on its own in `tests/w3c_shacl_baseline.json`, compares the
+  multiset of (focus, path, value, source shape, component, severity) with
+  paths compared structurally: 12 of 120 PASS, 48 of the gap being `sh:value`,
+  which the engine does not emit (#318). Severity went into the new column and
+  not the gated one because it drops the gated column from 61 to 60: the
+  engine keeps only the local name of a custom `sh:severity`
+  (`core/misc/severity-002`). The header's reason for ignoring severity, that
+  the engine did not read `sh:severity`, had been false since #206 and is gone.
+  A planted control mutates one PASS case's expected report in each of the six
+  fields and requires each copy to be rejected by name.
+- **`tools/shacl_differential.py` can no longer go green on nothing**
+  (reported by @noahgift in #320). It exited 0 on everything but a FALSE_CLEAN,
+  including no cases, no pyshacl and no comparisons, and the CI job's
+  case-studies corpus yields 4 pairs that all come back UNDETERMINED. It now
+  exits 2 (NOT MEASURED) for a missing or unpinned oracle, a missing engine,
+  empty discovery, fewer pairs run than discovered, or no pair compared; plants
+  a must-agree control and four mutated copies of pyshacl's report on every run
+  and exits 1 if any is misclassified; keys results on (focus, path, severity,
+  source shape, component) instead of (focus, path); records pyshacl, rdflib,
+  the engine binary's sha256 and every input's sha256; and with `--w3c`
+  arbitrates each disagreement against the W3C expected report. CI pins
+  pyshacl 0.40.1 and rdflib 7.6.0 and runs the corpus and the W3C suite
+  together: 117 pairs, 73 compared, 0 blocking, with 12 W3C-confirmed
+  FALSE_CLEANs reported as KNOWN because the conformance ratchet already
+  holds each as FAIL. `tools/fol_differential.py`
+  (every goal undetermined) and `tools/horn_differential.py` (every case not
+  run) had the same exit-0-on-nothing and now exit 2.
 
 ## [2.1.0] - 2026-10-23
 
