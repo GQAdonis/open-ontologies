@@ -558,7 +558,9 @@ impl OpenOntologiesServer {
             Ok(c) => c,
             Err(e) => return Self::err_json(format!("Cannot read {}: {}", input.old_path, e)),
         };
-        let new = match GraphStore::read_as_turtle(&input.new_path) {
+        // Against the old file's base, so a relative `<#Dog>` is one IRI on
+        // both sides and only real changes show up.
+        let new = match GraphStore::read_as_turtle_against(&input.new_path, &input.old_path) {
             Ok(c) => c,
             Err(e) => return Self::err_json(format!("Cannot read {}: {}", input.new_path, e)),
         };

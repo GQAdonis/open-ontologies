@@ -116,3 +116,65 @@ async fn onto_diff_reads_rdf_xml_like_turtle() {
     assert_eq!(out["added"], 0, "{out}");
     assert_eq!(out["removed"], 0, "{out}");
 }
+
+/// Two versions of a relative-IRI ontology: v2 adds one class.
+const REL_V1: &str = "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<#Dog> a owl:Class .\n<#Cat> a owl:Class .\n";
+const REL_V2: &str = "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<#Dog> a owl:Class .\n<#Cat> a owl:Class .\n<#Cow> a owl:Class .\n";
+
+/// Each file used to get its own `@base`, so `<#Dog>` was two IRIs and every
+/// triple came back as both added and removed (3 and 2 here).
+#[tokio::test]
+async fn onto_diff_resolves_both_sides_against_one_base() {
+    let (tmp, server) = server();
+    let v1 = write(&tmp, "v1.ttl", REL_V1);
+    let v2 = write(&tmp, "v2.ttl", REL_V2);
+
+    let out: serde_json::Value = serde_json::from_str(
+        &server
+            .onto_diff(Parameters(OntoDiffInput {
+                old_path: v1,
+                new_path: v2,
+            }))
+            .await,
+    )
+    .unwrap();
+    assert!(out.get("error").is_none(), "{out}");
+    assert_eq!(out["added"], 1, "{out}");
+    assert_eq!(out["removed"], 0, "{out}");
+}
+
+fn cli_diff(old: &str, new: &str) -> (Option<i32>, serde_json::Value) {
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_open-ontologies"))
+        .args(["diff", old, new])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let json = serde_json::from_str(stdout.trim())
+        .unwrap_or_else(|e| panic!("not JSON ({e}): {stdout}"));
+    (out.status.code(), json)
+}
+
+#[test]
+fn cli_diff_resolves_both_sides_against_one_base() {
+    let tmp = tempfile::tempdir().unwrap();
+    let v1 = write(&tmp, "v1.ttl", REL_V1);
+    let v2 = write(&tmp, "v2.ttl", REL_V2);
+
+    let (_, out) = cli_diff(&v1, &v2);
+    assert!(out.get("error").is_none(), "{out}");
+    assert_eq!(out["added"], 1, "{out}");
+    assert_eq!(out["removed"], 0, "{out}");
+}
+
+#[test]
+fn cli_diff_names_the_file_it_cannot_read() {
+    let tmp = tempfile::tempdir().unwrap();
+    let v1 = write(&tmp, "v1.ttl", REL_V1);
+    let missing = tmp.path().join("missing.ttl");
+    let missing = missing.to_str().unwrap();
+
+    let (code, out) = cli_diff(&v1, missing);
+    assert_eq!(code, Some(1), "{out}");
+    let err = out["error"].as_str().unwrap_or_default();
+    assert!(err.starts_with(&format!("Cannot read {missing}: ")), "{out}");
+}

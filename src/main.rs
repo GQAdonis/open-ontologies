@@ -2755,11 +2755,16 @@ async fn async_main() -> anyhow::Result<()> {
         Commands::Diff { old_path, new_path } => {
             use open_ontologies::ontology::OntologyService;
             // Read both sides as lint does: an RDF/XML file is converted rather
-            // than handed to the Turtle parser, and errors stay JSON.
-            let read = |path: &str| match GraphStore::read_as_turtle(path) {
+            // than handed to the Turtle parser, and errors stay JSON. Both sides
+            // resolve relative IRIs against the old file, so `<#Dog>` is the same
+            // IRI in both versions.
+            let read = |path: &str| match GraphStore::read_as_turtle_against(path, &old_path) {
                 Ok(c) => c,
                 Err(e) => {
-                    output_json(&serde_json::json!({"error": e.to_string()}), cli.pretty);
+                    output_json(
+                        &serde_json::json!({"error": format!("Cannot read {path}: {e}")}),
+                        cli.pretty,
+                    );
                     std::process::exit(1);
                 }
             };
