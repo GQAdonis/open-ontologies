@@ -53,6 +53,15 @@
 //! `core/targets/targetSubjectsOf-002`, differs only in multiplicity. No test
 //! differs in path.
 //!
+//! With #318 landed, default-path results carry `sh:value` and the column
+//! scores PASS 51 (measured 2026-10-24, same suite commit). The ten tests that
+//! still pass the gated column and not this one: `severity-002` (the local-name
+//! severity above), `class-003` and `targetSubjectsOf-002` (a node selected by
+//! two targets is reported twice), `lessThan-001`, `lessThanOrEquals-001` and
+//! `node-002` (no `sh:value`: their queries select DISTINCT ?focus),
+//! `or-datatypes-001` (an `sh:or` false negative), and `pre-binding-001`,
+//! `-002` and `-007` under `sparql/`.
+//!
 //! Severity is in the full-tuple column and NOT in the gated one, by
 //! measurement rather than by principle. The old reason for leaving it out
 //! ("the engine's `severity` field is not yet driven by `sh:severity`") is
