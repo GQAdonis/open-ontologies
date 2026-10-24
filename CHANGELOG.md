@@ -49,6 +49,27 @@ All notable changes to Open Ontologies are documented here.
   `readNat` declined "one" and -1 but evaluated `1.0` as 1. `onto_shacl_check`
   reports every ill-formed count or length literal as `ill_formed_literal`
   with its reason. `tests/shacl_count_bound_test.rs` holds it.
+- **`onto_classify_el` is an EL classifier now, and says when its table is not
+  complete** (reported by @noahgift in #324). It ran the OWL-RL-ext rules
+  under a header saying they were "sufficient for the EL fragment" and returned
+  "the full classification table". RL derives through a left-hand conjunction
+  or existential only for an individual, so `A ⊑ B, A ⊑ C, B ⊓ C ⊑ D` came back
+  without `A ⊑ D`, as did an existential reached through a conjunctive filler,
+  a domain, a range or a transitive role (MEASURED: all five missing before,
+  all five returned after). The issue's second example,
+  `A ⊑ ∃r.B, B ⊑ C, ∃r.C ⊑ D`, was already returned, through `scm-svf1`. The
+  read-back also stopped at 100,000 rows with no field to say so: a 460-class
+  chain (105,570 pairs) came back as 100,000 after about 420 s; it now
+  returns all 105,570 in 5.6 s (both debug builds). The tool now normalises the axioms the tableau's
+  parser reads and saturates them with the EL completion rules (CR1-CR4,
+  ⊥-propagation, role hierarchy, transitive roles, ranges compiled into
+  fillers). The report gains `complete` (true only inside EL with nothing set
+  aside), `incompleteness`, `consistent`, `truncated` (no cap remains, always
+  false) and `unsatisfiable`; outside EL the RL rules are still unioned in.
+  `tests/classify_el_differential_test.rs` checks it against the `owl-dl`
+  tableau on 120 generated EL TBoxes (no disagreement; dropping the range
+  rule makes it report 6) and against HermiT's
+  Pizza classification (every reported pair entailed).
 
 ## [2.1.0] - 2026-10-23
 
