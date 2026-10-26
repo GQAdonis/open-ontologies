@@ -567,6 +567,10 @@ jobs:
         # batch executor and the single-command path, which are different code
         # that have already differed once.
         run: OO_REQUIRE_FIXTURES=1 cargo test --test cli_verified_shacl_test -- --nocapture
+      - name: A malformed count bound is refused on the verified path too
+        # shacl_count_bound_test's verified half runs oo-shacl, which this job
+        # builds. Without the binary it would skip and report ok (#321).
+        run: OO_REQUIRE_FIXTURES=1 cargo test --test shacl_count_bound_test -- --nocapture
       - name: A numeric claim, checked in Lean
         # The integer path earns MatCert.mul_of_check, and the two cheaper
         # paths must NOT. Strict, because a skip here would let the three
@@ -969,6 +973,10 @@ jobs:
           set -o pipefail
           OO_REQUIRE_FIXTURES=1 cargo test --test w3c_shacl_conformance_test -- --nocapture \
             2>&1 | tee w3c-shacl-conformance.log
+      - name: The W3C report graph matches the suite's expected reports
+        # shacl_validation_report_w3c_test reads the same vendored suite and
+        # skips without it; this job is where the suite is guaranteed (#318).
+        run: OO_REQUIRE_FIXTURES=1 cargo test --test shacl_validation_report_w3c_test -- --nocapture
       - name: Upload the per-test report
         if: always()
         uses: actions/upload-artifact@v4

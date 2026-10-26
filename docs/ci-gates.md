@@ -69,6 +69,7 @@ job invokes the file at all.
 | `shacl_core_verified_test.rs` | lake + vendored W3C SHACL suite | `lean` job | **strict** |
 | `dl_model_certificate_test.rs` | lake + `oo-dlmodel` | `lean` job | **strict** |
 | `shacl_verified_tool_test.rs` | lake + `oo-shacl` | `lean` job | **strict** |
+| `shacl_count_bound_test.rs` | lake + `oo-shacl` | `lean` job | **strict** |
 | `matcert_numeric_test.rs` | lake + `oo-matcert` | `lean` job | **strict** |
 | `certified_claims_asset_test.rs` | lake + `oo-matcert` | `lean` job | **strict** |
 | `shacl_ignored_is_named_test.rs` | lake + `oo-shacl` | `lean` job | **strict** |
@@ -93,6 +94,7 @@ job invokes the file at all.
 | `preserve_cli_test.rs` | lake | `lean` job | **strict** |
 | `gate_demonstration_test.rs` | lake | `lean` job | **strict** |
 | `w3c_shacl_conformance_test.rs` | vendored W3C SHACL suite (in tree) | `w3c-shacl` job | **strict** |
+| `shacl_validation_report_w3c_test.rs` | vendored W3C SHACL suite (in tree) | `w3c-shacl` job | **strict** |
 | `certificate_boundary_proptest.rs` | lake | `lean` job | **strict** |
 | `premise_order_test.rs` | `lean/OOCert/Rules.lean` (in tree) | every job that runs `cargo test` | **runs everywhere**: it READS the Lean source rather than building it, so TCB-14 is gated without a toolchain |
 | `reason_rl_coverage_test.rs` | lake | `lean` job | **strict** |
