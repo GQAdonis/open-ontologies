@@ -636,6 +636,17 @@ impl BatchRunner {
             Some(p) => p,
             None => return json!({"error": "shacl requires a shapes file path"}),
         };
+        // A batch result is a JSON value, so an RDF report has nowhere to go.
+        // The CLI keeps such an invocation local for that reason; one written
+        // into a batch file by hand is refused rather than answered in JSON.
+        if let Some(f) = Self::flag_value(args, "--report-format")
+            && f != "json"
+        {
+            return json!({"error": format!(
+                "--report-format {f} is not available in a batch: batch results are JSON. \
+                 Run `shacl --report-format {f}` directly."
+            )});
+        }
         if args.iter().any(|a| a == "--verified") {
             // Refused rather than ignored, the same answer `onto_shacl` gives.
             // The verified evaluator reads one N-Triples dump of the store and
@@ -849,6 +860,24 @@ impl BatchRunner {
             if args.len() > 1 { args[1].clone() } else { "turtle".to_string() }
         });
         let output = Self::flag_value(args, "--output");
+        if crate::ofn_writer::is_ofn_format(&to) {
+            return match crate::ofn_writer::convert_file(path) {
+                Ok(out) => {
+                    let mut report = out.report_json();
+                    if let Some(out_path) = output {
+                        if let Err(e) = std::fs::write(&out_path, &out.text) {
+                            return json!({"error": e.to_string()});
+                        }
+                        report["path"] = json!(out_path);
+                    } else {
+                        report["content_length"] = json!(out.text.len());
+                    }
+                    report["ok"] = json!(true);
+                    report
+                }
+                Err(e) => json!({"error": e.to_string()}),
+            };
+        }
         let store = GraphStore::new();
         match store.load_file(path) {
             Ok(_) => match store.serialize(&to) {

@@ -7,6 +7,9 @@ use oxigraph::model::*;
 use oxigraph::sparql::{QueryResults, SparqlEvaluator};
 use oxigraph::store::Store;
 
+/// A document's quads and the namespace prefixes it declared, in order.
+pub type ParsedDocument = (Vec<Quad>, Vec<(String, String)>);
+
 /// How a document is serialised: one of the RDF formats Oxigraph parses, or
 /// OWL 2 functional syntax, which is not RDF and is read by [`crate::ofn`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -182,6 +185,21 @@ pub struct GraphStore {
     store: Store,
 }
 
+/// Why [`GraphStore::canonicalize_pair`] compared only ground triples.
+///
+/// Diff and drift attach this to their reports. It is returned alongside the
+/// stores rather than logged so that a caller cannot present the cut as an
+/// exact comparison without dropping a value it was handed.
+#[derive(Debug, Clone)]
+pub struct Approximation {
+    /// The RDFC-1.0 budget error from the snapshot that exhausted it.
+    pub reason: String,
+    /// Quads mentioning a blank node that were left out of the old snapshot.
+    pub omitted_old: usize,
+    /// The same count for the new snapshot.
+    pub omitted_new: usize,
+}
+
 impl Default for GraphStore {
     fn default() -> Self {
         Self::new()
@@ -312,6 +330,20 @@ impl GraphStore {
         self.store_parsed_quads(&quads, replace)
     }
 
+    /// A file's quads, as parsed and never stored, with the namespace
+    /// prefixes it declared, in the order it declared them.
+    ///
+    /// A store holds no prefixes, and it also normalises some literals, so a
+    /// writer that must give back exactly the document's graph, abbreviated
+    /// with the document's own names, reads the document here. The OWL
+    /// functional-syntax writer (issue #322) is that writer.
+    pub fn read_file_with_prefixes(
+        path: &str,
+    ) -> anyhow::Result<ParsedDocument> {
+        let content = std::fs::read_to_string(path)?;
+        Self::parse_document_with_prefixes(path, &content)
+    }
+
     /// Parse a whole document, whatever it is serialised as, into quads.
     ///
     /// Every path that reads a FILE goes through here (`load_file`,
@@ -321,19 +353,39 @@ impl GraphStore {
     /// syntax reader existed each of those called the RDF parser directly, and
     /// adding a format meant finding all of them.
     fn parse_document(path: &str, content: &str) -> anyhow::Result<Vec<Quad>> {
-        Self::parse_document_with_base(path, content, Self::file_base_iri(path))
+        Ok(Self::parse_document_with_prefixes(path, content)?.0)
     }
 
+    /// [`Self::parse_document`], keeping the prefixes the parser saw.
+    fn parse_document_with_prefixes(
+        path: &str,
+        content: &str,
+    ) -> anyhow::Result<ParsedDocument> {
+        Self::parse_document_with_base_and_prefixes(path, content, Self::file_base_iri(path))
+    }
+
+    /// [`Self::parse_document`] with an explicit base IRI for relative IRIs.
     fn parse_document_with_base(
         path: &str,
         content: &str,
         base: Option<String>,
     ) -> anyhow::Result<Vec<Quad>> {
+        Ok(Self::parse_document_with_base_and_prefixes(path, content, base)?.0)
+    }
+
+    fn parse_document_with_base_and_prefixes(
+        path: &str,
+        content: &str,
+        base: Option<String>,
+    ) -> anyhow::Result<ParsedDocument> {
         match Self::detect_source_format(path, content) {
-            SourceFormat::OwlFunctional => Ok(crate::ofn::parse(content)?
-                .into_iter()
-                .map(|t| t.in_graph(GraphName::DefaultGraph))
-                .collect()),
+            SourceFormat::OwlFunctional => Ok((
+                crate::ofn::parse(content)?
+                    .into_iter()
+                    .map(|t| t.in_graph(GraphName::DefaultGraph))
+                    .collect(),
+                crate::ofn::declared_prefixes(content),
+            )),
             SourceFormat::Rdf(format) => {
                 // A document's own location is its default base, per RFC 3986.
                 // Without it, any file using relative IRIs fails to parse at
@@ -344,9 +396,16 @@ impl GraphStore {
                 if let Some(base) = base {
                     parser = parser.with_base_iri(base)?;
                 }
-                Ok(parser
-                    .for_reader(Cursor::new(content.as_bytes()))
-                    .collect::<Result<_, _>>()?)
+                let mut reader = parser.for_reader(Cursor::new(content.as_bytes()));
+                let mut quads = Vec::new();
+                for quad in &mut reader {
+                    quads.push(quad?);
+                }
+                let prefixes = reader
+                    .prefixes()
+                    .map(|(name, iri)| (name.to_string(), iri.to_string()))
+                    .collect();
+                Ok((quads, prefixes))
             }
         }
     }
@@ -669,29 +728,77 @@ impl GraphStore {
     /// label/domain/range/hierarchy/individual signal ensemble, so the
     /// net result is more informative than the previous "filter and forget"
     /// approach (PR #14, @rustforrecess) that dropped bnode content entirely.
+    ///
+    /// The work is bounded by [`crate::canon::DEFAULT_CALL_BUDGET`] and a
+    /// poisoned graph is an `Err`, never a hang. oxrdf's `Dataset::canonicalize`
+    /// sets no such bound, and through it a 7-node blank-node clique took 17 to
+    /// 23 seconds to diff against itself and an 8-node clique did not finish in
+    /// three minutes (issue #293). `crate::canon` is the same Recommendation,
+    /// gated on the W3C suite in `tests/w3c-rdfc10/` label map included, so the
+    /// labels an ordinary graph receives do not change.
     pub fn canonicalize_blank_nodes(&self) -> anyhow::Result<GraphStore> {
-        use oxigraph::model::dataset::{CanonicalizationAlgorithm, CanonicalizationHashAlgorithm};
-        use oxigraph::model::Dataset;
-
-        let store = &self.store;
-        let mut dataset = Dataset::new();
-        for quad in store.iter() {
-            let q = quad?;
-            dataset.insert(&q);
-        }
-
-        dataset.canonicalize(CanonicalizationAlgorithm::Rdfc10 {
-            hash_algorithm: CanonicalizationHashAlgorithm::Sha256,
-        });
-
+        let quads = self.store.iter().collect::<Result<Vec<Quad>, _>>()?;
+        let canonical = crate::canon::canonical_quads(
+            &quads,
+            crate::canon::DEFAULT_CALL_BUDGET,
+            crate::canon::HashAlgorithm::Sha256,
+        )?;
         let new_gs = GraphStore::new();
-        {
-            let new_store = &new_gs.store;
-            for quad in dataset.iter() {
-                new_store.insert(quad)?;
-            }
+        for quad in &canonical {
+            new_gs.store.insert(quad)?;
         }
         Ok(new_gs)
+    }
+
+    /// Canonicalise two snapshots for comparison, or, when either exhausts the
+    /// RDFC-1.0 budget, cut BOTH to the quads that mention no blank node.
+    ///
+    /// This is for commands that compare snapshots (diff, drift) and must
+    /// answer on any input, a poisoned one included. Dropping every quad that
+    /// mentions a blank node is the one cut that is still sound for what
+    /// remains: ground quads need no labels, so a change among them is a real
+    /// change and an absence is a real absence. Both sides are cut, because
+    /// canonical labels on one side against nothing on the other would report
+    /// every blank-node triple of the exact side as a change nobody made. What
+    /// the cut loses is every statement about anonymous structure, and the
+    /// returned [`Approximation`] says so with the reason and the counts.
+    pub fn canonicalize_pair(
+        old: &GraphStore,
+        new: &GraphStore,
+    ) -> anyhow::Result<(GraphStore, GraphStore, Option<Approximation>)> {
+        let budget_error = |e: anyhow::Error| match e.downcast::<crate::canon::CanonError>() {
+            Ok(canon) => Ok(canon.to_string()),
+            Err(other) => Err(other),
+        };
+        let reason = match old.canonicalize_blank_nodes() {
+            Ok(old_canon) => match new.canonicalize_blank_nodes() {
+                Ok(new_canon) => return Ok((old_canon, new_canon, None)),
+                Err(e) => budget_error(e)?,
+            },
+            Err(e) => budget_error(e)?,
+        };
+        let (old_ground, omitted_old) = old.ground_quads()?;
+        let (new_ground, omitted_new) = new.ground_quads()?;
+        Ok((old_ground, new_ground, Some(Approximation { reason, omitted_old, omitted_new })))
+    }
+
+    /// A new store holding only the quads that mention no blank node, and the
+    /// number of quads left out.
+    pub fn ground_quads(&self) -> anyhow::Result<(GraphStore, usize)> {
+        let ground = GraphStore::new();
+        let mut omitted = 0;
+        for quad in self.store.iter() {
+            let quad = quad?;
+            let mentions_blank = quad.subject.is_blank_node()
+                || quad.object.is_blank_node()
+                || quad.graph_name.is_blank_node();
+            if mentions_blank {
+                omitted += 1;
+            } else {
+                ground.store.insert(&quad)?;
+            }
+        }
+        Ok((ground, omitted))
     }
 
     pub fn serialize(&self, format: &str) -> anyhow::Result<String> {

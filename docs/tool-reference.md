@@ -98,13 +98,13 @@ it withheld.
 | `onto_cache_remove` | Remove a cached ontology by name. |
 | `onto_cache_status` | Inspect the compile cache: active ontology, all cached entries, and the cache configuration (TTL, auto_refresh, dir). |
 | `onto_certify_action` | CIVeX-style causal certificate for a proposed state-changing ontology action. |
-| `onto_classify_el` | Classify the loaded ontology in the OWL-EL fragment (#30). |
+| `onto_classify_el` | Classify the loaded ontology by OWL 2 EL completion (#30, #324); `complete: true` only when the input is inside EL. |
 | `onto_clear` | Clear all triples from the in-memory ontology store and unload the active registry slot (cache file is preserved) |
 | `onto_closure_diff` | Which CONCLUSIONS a projection preserves, with no goals supplied. |
 | `onto_coevolve_dependency_graph` | Build the shape→OWL-dependency map for a SHACL document. |
 | `onto_communities` | Detect communities in the loaded entity graph and return a SKELETON per community: size, top members by degree, internal relations, and the bridges connecting it to other communities. |
 | `onto_conservative_check` | Does adding these axioms change anything the ontology ALREADY said? Reasons base and base+extension to a fixpoint under one rule table and reports closure(base ∪ extension) minus closure(base), restricted to triples every name of which the base already used. |
-| `onto_convert` | Convert an ontology file to turtle, ntriples, rdfxml, nquads or trig. |
+| `onto_convert` | Convert an ontology file to turtle, ntriples, rdfxml, nquads, trig or ofn (OWL 2 functional syntax, with every unexported construct named and counted). |
 | `onto_cq_run` | Run a batch of competency questions (CQs) against the loaded ontology (#29). |
 | `onto_cq_verdicts_list` | List all stored verdicts for a CQ id, most-recent first. |
 | `onto_crosswalk` | Look up clinical crosswalk mappings for a code and system (ICD10, SNOMED, MeSH). |
