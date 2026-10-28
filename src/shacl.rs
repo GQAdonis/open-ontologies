@@ -529,10 +529,7 @@ impl ShaclValidator {
                 let pick = |k: &str| own.iter().find(|(p, _)| p == k).map(|(_, v)| v.clone());
                 let own_message = pick("message").map(|m| strip_quotes(&m)).unwrap_or_default();
                 let own_severity = pick("severity")
-                    .map(|s| {
-                        let s = strip_angle_brackets(&s);
-                        s.rsplit('#').next().unwrap_or("Violation").to_string()
-                    })
+                    .map(|s| severity_name(&s))
                     .unwrap_or_else(|| "Violation".to_string());
                 let own_flags = pick("flags").map(|f| strip_quotes(&f));
                 let own_rdf = RdfTerms::new(
@@ -568,14 +565,10 @@ impl ShaclValidator {
                             // datatype's lexical space is ill-typed and violates
                             // sh:datatype (SHACL 4.1.2), and DATATYPE() alone
                             // cannot see that: "aldi"^^xsd:integer answers
-                            // xsd:integer. The lexical test below catches it for
-                            // the datatypes whose lexical space is written down.
-                            let ill = ill_typed_test(&dt, "focus")
-                                .map(|t| format!(" || {t}"))
-                                .unwrap_or_default();
+                            // xsd:integer. `datatype_conforms` tests both.
                             checks.push((
                                 "datatype".into(),
-                                format!("(!isLiteral(?focus) || DATATYPE(?focus) != <{dt}>{ill})"),
+                                format!("!{}", datatype_conforms(&dt, "focus")),
                                 format!("Value does not have datatype <{dt}>"),
                             ));
                         }
@@ -842,7 +835,7 @@ impl ShaclValidator {
                     continue;
                 }
                 let clause = if let Some(dt) = row.get("datatype") {
-                    format!("DATATYPE(?val) = <{}>", strip_angle_brackets(dt))
+                    datatype_conforms(&strip_angle_brackets(dt), "val")
                 } else if let Some(c) = row.get("class") {
                     format!(
                         "EXISTS {{ ?val <http://www.w3.org/1999/02/22-rdf-syntax-ns#type>/<http://www.w3.org/2000/01/rdf-schema#subClassOf>* <{}> }}",
@@ -925,7 +918,7 @@ impl ShaclValidator {
                     continue;
                 }
                 let clause = if let Some(dt) = row.get("datatype") {
-                    format!("DATATYPE(?val) = <{}>", strip_angle_brackets(dt))
+                    datatype_conforms(&strip_angle_brackets(dt), "val")
                 } else if let Some(c) = row.get("class") {
                     format!(
                         "EXISTS {{ ?val <http://www.w3.org/1999/02/22-rdf-syntax-ns#type>/<http://www.w3.org/2000/01/rdf-schema#subClassOf>* <{}> }}",
@@ -1059,7 +1052,8 @@ impl ShaclValidator {
                             break;
                         }
                         clauses.push(format!(
-                            "NOT EXISTS {{ ?focus <{path}> ?{v} . FILTER(DATATYPE(?{v}) != <{dt}>) }}"
+                            "NOT EXISTS {{ ?focus <{path}> ?{v} . FILTER(!{}) }}",
+                            datatype_conforms(&dt, &v)
                         ));
                     }
                     if let Some(nk) = row.get("nodeKind") {
@@ -1183,13 +1177,7 @@ impl ShaclValidator {
                 let q_message = row.get("message").map(|m| strip_quotes(m)).unwrap_or_default();
                 let q_severity = row
                     .get("severity")
-                    .map(|s| {
-                        strip_angle_brackets(s)
-                            .rsplit('#')
-                            .next()
-                            .unwrap_or("Violation")
-                            .to_string()
-                    })
+                    .map(|s| severity_name(s))
                     .unwrap_or_else(|| "Violation".to_string());
                 let q_rdf = RdfTerms::new(
                     row.get("severity").cloned(),
@@ -1204,7 +1192,7 @@ impl ShaclValidator {
                         strip_angle_brackets(c)
                     ))
                 } else if let Some(dt) = row.get("datatype") {
-                    Some(format!("DATATYPE(?val) = <{}>", strip_angle_brackets(dt)))
+                    Some(datatype_conforms(&strip_angle_brackets(dt), "val"))
                 } else {
                     row.get("hasValue").map(|hv| format!("?val = {}", hv.trim()))
                 };
@@ -1348,10 +1336,7 @@ impl ShaclValidator {
                 // sh:severity, defaulting to sh:Violation per the SHACL spec.
                 let severity = prop
                     .get("severity")
-                    .map(|s| {
-                        let s = strip_angle_brackets(s);
-                        s.rsplit('#').next().unwrap_or("Violation").to_string()
-                    })
+                    .map(|s| severity_name(s))
                     .unwrap_or_else(|| "Violation".to_string());
                 let rdf = RdfTerms::new(
                     prop.get("severity").cloned(),
@@ -1489,7 +1474,7 @@ impl ShaclValidator {
                     // One evaluator gave two answers to one constraint. SHACL
                     // 4.1.2 makes a literal whose lexical form is outside its
                     // datatype's lexical space a violation, `DATATYPE()` alone
-                    // cannot see that, and `ill_typed_test` is the helper that
+                    // cannot see that, and `datatype_conforms` is the helper that
                     // can. The node-shape path above has spliced it in since it
                     // was written; this path never did. Measured over one
                     // store: `"aldi"^^xsd:integer` and `"31/02/2026"^^xsd:date`
@@ -1499,20 +1484,24 @@ impl ShaclValidator {
                     // the constraint.
                     //
                     // This closes the divergence and NOT the wider gap.
-                    // `ill_typed_test` tests a REGEX, and the date regex is
+                    // `datatype_conforms` tests a REGEX, and the date regex is
                     // syntactic: `"2026-02-31"^^xsd:date` matches it, so a day
                     // that does not exist still conforms on both paths. The
                     // verified evaluator in `lean/Shacl/Term.lean` checks the
                     // day against `daysInMonth` and reports it, so Lean and
                     // Rust disagree there. See decision 0018.
-                    let ill = ill_typed_test(&dt, "val")
-                        .map(|t| format!(" || {t}"))
-                        .unwrap_or_default();
+                    //
+                    // The filter is the negation of `datatype_conforms`, which
+                    // cannot be a type error. `DATATYPE(?val) != <dt>` was one
+                    // for an IRI or blank-node value, and FILTER drops a row
+                    // whose test errors, so a value that is not a literal at
+                    // all passed `sh:datatype` here (#333).
+                    let conforms = datatype_conforms(&dt, "val");
                     let query = format!(
                         r#"SELECT ?focus ?val WHERE {{
                             {focus_pattern}
                             ?focus {path_expr} ?val .
-                            FILTER(DATATYPE(?val) != <{dt}>{ill})
+                            FILTER(!{conforms})
                         }}"#
                     );
                     let results = graph_sparql_select(graph, scope, &query)?;
@@ -2089,13 +2078,7 @@ impl ShaclValidator {
                     .unwrap_or_default();
                 let severity = constraint
                     .get("severity")
-                    .map(|s| {
-                        strip_angle_brackets(s)
-                            .rsplit('#')
-                            .next()
-                            .unwrap_or("Violation")
-                            .to_string()
-                    })
+                    .map(|s| severity_name(s))
                     .unwrap_or_else(|| "Violation".to_string());
 
                 // SHACL-SPARQL 5.3.2: `$this` is pre-bound to the focus node,
@@ -2813,10 +2796,7 @@ fn compile_node_shape(
                 "EXISTS {{ ?{var} <http://www.w3.org/1999/02/22-rdf-syntax-ns#type>/<http://www.w3.org/2000/01/rdf-schema#subClassOf>* <{}> }}",
                 strip_angle_brackets(obj)
             )),
-            "datatype" => clauses.push(format!(
-                "DATATYPE(?{var}) = <{}>",
-                strip_angle_brackets(obj)
-            )),
+            "datatype" => clauses.push(datatype_conforms(&strip_angle_brackets(obj), var)),
             "nodeKind" => clauses.push(node_kind_test(&strip_angle_brackets(obj), var)?),
             _ => return None,
         }
@@ -2902,7 +2882,8 @@ fn compile_node_shape(
                 return None;
             }
             clauses.push(format!(
-                "NOT EXISTS {{ ?{var} <{path}> ?{inner} . FILTER(DATATYPE(?{inner}) != <{dt}>) }}"
+                "NOT EXISTS {{ ?{var} <{path}> ?{inner} . FILTER(!{}) }}",
+                datatype_conforms(&dt, &inner)
             ));
         }
         if let Some(nk) = row.get("nodeKind") {
@@ -3232,12 +3213,11 @@ fn attribute(
 /// store printed them, for the RDF report and for nothing else.
 ///
 /// The JSON report keeps a reduced form of both and cannot be changed without
-/// breaking its readers: `severity` is the IRI's local name and `message` is
-/// the literal's lexical value. Neither reduction is reversible. W3C
-/// `core/misc/severity-002` declares `sh:severity ex:MySeverity`, which the
-/// JSON carries as `"MySeverity"` and a writer reading it back can only guess
-/// the namespace of; `core/misc/message-001` declares `"Test message"@en`, and
-/// the language tag is gone. SHACL 3.6.2 makes `sh:resultSeverity` the shape's
+/// breaking its readers: `severity` is [`severity_name`], the local name for
+/// SHACL's own severities and the full IRI for any other, and `message` is
+/// the literal's lexical value. The message reduction is not reversible:
+/// `core/misc/message-001` declares `"Test message"@en`, and the language tag
+/// is gone. SHACL 3.6.2 makes `sh:resultSeverity` the shape's
 /// `sh:severity` and `sh:resultMessage` a copy of its `sh:message`, so the
 /// writer needs the terms as written. They travel inside each violation under
 /// [`crate::shacl_report::RDF_TERMS_KEY`] and the JSON renderer removes them.
@@ -3273,15 +3253,41 @@ fn constraint_component(constraint: &str) -> String {
     format!("http://www.w3.org/ns/shacl#{name}ConstraintComponent")
 }
 
-/// `Some(test)` that is TRUE when `?var` is a literal of `datatype` whose
-/// lexical form is outside that datatype's lexical space, for the datatypes
-/// whose lexical space is written down here. `None` for any other datatype,
-/// where an ill-typed literal cannot be told from a well-typed one.
+/// The SPARQL test that is TRUE exactly when `?var` conforms to
+/// `sh:datatype <datatype>` (SHACL 4.1.2): it is a literal, its datatype is
+/// `datatype`, and, for the datatypes whose lexical space is written down
+/// below, its lexical form is inside that space. Every place the engine asks
+/// "does this value have datatype D" splices this one expression, positively
+/// for `sh:or`, `sh:qualifiedValueShape` and `sh:not` members and a nested
+/// `sh:node`, negated for the constraint itself.
+///
+/// It is never a SPARQL type error, and that is the point (#333). The bare
+/// `DATATYPE(?v) = <D>` it replaces is an error for an IRI or blank node, an
+/// error inside `!(a || b)` stays an error, and FILTER drops a row whose test
+/// errors. So an IRI value of a property under `sh:or` over datatypes matched
+/// no alternative and was never reported; the same drop let an IRI pass a
+/// property shape's `sh:datatype` and a nested `sh:node` datatype. Here
+/// `isLiteral` comes first and `false && error` is `false`. And `DATATYPE()`
+/// alone answers `xsd:boolean` for the ill-typed `"none"^^xsd:boolean`, which
+/// is why every member test now carries the lexical check that only the
+/// direct `sh:datatype` constraints had: W3C `core/property/or-datatypes-001`
+/// reported one of its three violations.
+fn datatype_conforms(datatype: &str, var: &str) -> String {
+    let lexical = lexical_space_regex(datatype)
+        .map(|re| format!(" && REGEX(STR(?{var}), \"{re}\")"))
+        .unwrap_or_default();
+    format!("(isLiteral(?{var}) && DATATYPE(?{var}) = <{datatype}>{lexical})")
+}
+
+/// The XSD lexical space of `datatype` as a regex already escaped for a
+/// SPARQL string literal, for the datatypes whose lexical space is written
+/// down here. `None` for any other datatype, where an ill-typed literal cannot
+/// be told from a well-typed one.
 ///
 /// The patterns are the XSD lexical spaces, not the value spaces: `01` is a
 /// valid integer lexical form and `1.` a valid decimal one. Backslashes are
 /// doubled once for the SPARQL string literal they are spliced into.
-fn ill_typed_test(datatype: &str, var: &str) -> Option<String> {
+fn lexical_space_regex(datatype: &str) -> Option<String> {
     const XSD: &str = "http://www.w3.org/2001/XMLSchema#";
     let local = datatype.strip_prefix(XSD)?;
     let re = match local {
@@ -3305,8 +3311,27 @@ fn ill_typed_test(datatype: &str, var: &str) -> Option<String> {
     // | '"' | '\'' | '\\']` and the validator returned Err, so a shapes graph
     // that named a decimal, double, float or dateTime could not be evaluated
     // at all.
-    let escaped = re.replace('\\', "\\\\");
-    Some(format!("(DATATYPE(?{var}) = <{datatype}> && !REGEX(STR(?{var}), \"{escaped}\"))"))
+    Some(re.replace('\\', "\\\\"))
+}
+
+/// The JSON `severity` of a declared `sh:severity` term: the local name for
+/// an IRI in the SHACL namespace (`"Violation"`, `"Warning"`, `"Info"`, which
+/// existing readers match on), and the full IRI for any other.
+///
+/// Every path used to take the text after the last `#` (#334). That is
+/// reversible only if the reader knows the namespace, and the readers,
+/// `tests/w3c_shacl_conformance_test.rs` and `tools/shacl_differential.py`,
+/// read a bare name as `sh:`. So W3C `core/misc/severity-002`'s
+/// `ex:MySeverity`, in a hash namespace, came back as `sh:MySeverity`, a
+/// different severity, while one in a slash namespace survived whole by
+/// accident of where the cut fell. Both readers already take a name
+/// containing `:` as a full IRI, so they now read every severity exactly.
+fn severity_name(raw: &str) -> String {
+    let iri = strip_angle_brackets(raw);
+    match iri.strip_prefix("http://www.w3.org/ns/shacl#") {
+        Some(local) => local.to_string(),
+        None => iri,
+    }
 }
 
 /// `<http://www.w3.org/ns/shacl#class>` -> `class`, for the node-level rows.

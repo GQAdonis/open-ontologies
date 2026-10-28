@@ -117,6 +117,30 @@ All notable changes to Open Ontologies are documented here.
   `budget.configured_bound`. The note says which phases each clock stopped,
   and it no longer claims that the ceiling "cannot" fire, since that was
   arithmetic about the tableaux and not about the run.
+
+- **A custom `sh:severity` keeps its namespace in the JSON report** (#334).
+  Every path set `severity` to the text after the last `#` of the declared
+  IRI, and every reader takes a bare name as `sh:`, so W3C
+  `core/misc/severity-002`'s `ex:MySeverity` read back as `sh:MySeverity`
+  (one in a slash namespace survived whole only because it has no `#`).
+  `sh:Violation`, `sh:Warning` and `sh:Info` are still `"Violation"`,
+  `"Warning"` and `"Info"`; any IRI outside the SHACL namespace is now written
+  whole, on node-shape, property-shape, qualified and `sh:sparql` results. The
+  RDF report already wrote the declared term. W3C full-tuple column 52 to 53
+  PASS; gated column unchanged at 61.
+- **A value that is not a well-typed literal of D no longer satisfies a
+  `sh:datatype D` test anywhere in the SHACL engine** (#333). The test was
+  spliced as `DATATYPE(?v) = <D>`, a SPARQL type error for an IRI or blank
+  node, and FILTER drops a row whose test errors: an IRI value under `sh:or`
+  over datatypes matched no alternative and was never reported, and an IRI
+  passed a property shape's `sh:datatype` and a datatype nested under
+  `sh:node` or a node-level `sh:or`. Separately, the `sh:or`, `sh:not`,
+  `sh:qualifiedValueShape` and `sh:node` member tests lacked the lexical check
+  the direct constraints had, so `"none"^^xsd:boolean` counted as an
+  xsd:boolean. One helper, `datatype_conforms`, is now spliced at all eight
+  sites and cannot error. W3C `core/property/or-datatypes-001` reports 3 of 3
+  violations where it reported 1: full-tuple column 51 to 52 PASS, report
+  match 48 to 49 of 56, gated column unchanged at 61.
 - **`diff` and `drift` no longer hang on a symmetric blank-node graph** (#293).
   Both canonicalised blank nodes through oxrdf's RDFC-1.0, which sets no limit
   on `hash_n_degree_quads` calls, so the cost was factorial: a 7-node

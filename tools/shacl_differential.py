@@ -155,8 +155,9 @@ def shape_key(parent, path):
 
 
 def severity_iri(s):
-    """The engine reports the local name of sh:severity; read a bare name as
-    being in the SHACL namespace, as tests/w3c_shacl_conformance_test.rs does."""
+    """The engine reports SHACL's own severities by local name and any other
+    sh:severity as its full IRI (#334); read a bare name as being in the SHACL
+    namespace, as tests/w3c_shacl_conformance_test.rs does."""
     if not s:
         return None
     return s if ":" in s else SH + s

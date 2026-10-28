@@ -211,7 +211,9 @@ ex:S a sh:NodeShape ; sh:targetClass ex:Nobody ;
 
 #[test]
 fn a_custom_severity_iri_and_a_language_tag_survive_into_the_graph() {
-    // The JSON keeps `"MySeverity"` and `"Too old"`; the graph needs the terms.
+    // The JSON keeps `"Too old"` without its tag; the graph needs the terms.
+    // The severity is outside the SHACL namespace, so the JSON carries its
+    // full IRI (#334) rather than a local name read back as `sh:MySeverity`.
     let shapes = r#"
 @prefix sh: <http://www.w3.org/ns/shacl#> .
 @prefix ex: <http://ex.org/> .
@@ -222,13 +224,144 @@ ex:S a sh:NodeShape ; sh:targetClass ex:Person ;
                   sh:severity sev:MySeverity ; sh:message "Too old"@en ] .
 "#;
     let j = json_report(DATA, shapes);
-    assert_eq!(j["violations"][0]["severity"], "MySeverity", "{j}");
+    assert_eq!(j["violations"][0]["severity"], "http://ex.org/sev#MySeverity", "{j}");
     assert_eq!(j["violations"][0]["message"], "Too old", "{j}");
     let s = parsed(&rdf_report(DATA, shapes, ReportFormat::Turtle), RdfFormat::Turtle);
     assert!(ask(
         &s,
         r#"?x sh:resultSeverity <http://ex.org/sev#MySeverity> ; sh:resultMessage "Too old"@en"#
     ));
+}
+
+/// #334, W3C `core/misc/severity-002`. The JSON `severity` was `sh:severity`
+/// cut after its last `#` on every path, so a custom severity in a hash
+/// namespace came out as `"MySeverity"` and every reader, the W3C full-tuple
+/// comparison included, had to guess its namespace and guessed `sh:`. (One in
+/// a slash namespace survived whole, by accident of where the cut fell.) The
+/// three SHACL severities keep their local name, which is what existing
+/// readers match on; any other IRI is carried whole. Checked on each path that
+/// reads `sh:severity`: a node shape's own constraint, a property shape, a
+/// qualified shape and `sh:sparql`.
+#[test]
+fn a_custom_severity_keeps_its_namespace_in_the_json_on_every_path() {
+    let shapes = r#"
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://ex.org/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix sev: <http://ex.org/sev#> .
+ex:NodeLevel a sh:NodeShape ; sh:targetNode ex:alice ;
+    sh:nodeKind sh:BlankNode ; sh:severity sev:MySeverity .
+ex:PropLevel a sh:NodeShape ; sh:targetClass ex:Person ;
+    sh:property [ sh:path ex:age ; sh:datatype xsd:integer ; sh:severity sev:MySeverity ] ;
+    sh:property [ sh:path ex:home ; sh:nodeKind sh:IRI ; sh:severity sh:Warning ] ;
+    sh:property [ sh:path ex:code ; sh:pattern "^[0-9]+$" ] ;
+    sh:property [ sh:path ex:knows ; sh:qualifiedValueShape [ sh:class ex:Person ] ;
+                  sh:qualifiedMinCount 1 ; sh:severity sev:MySeverity ] .
+ex:SparqlLevel a sh:NodeShape ; sh:targetClass ex:Person ;
+    sh:sparql [ sh:severity sev:MySeverity ;
+        sh:select "SELECT $this WHERE { $this <http://ex.org/home> ?h }" ] .
+"#;
+    let j = json_report(DATA, shapes);
+    let mut got: Vec<(String, String)> = j["violations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| (v["constraint"].as_str().unwrap().to_string(), v["severity"].as_str().unwrap().to_string()))
+        .collect();
+    got.sort();
+    let custom = "http://ex.org/sev#MySeverity";
+    let mut want: Vec<(String, String)> = [
+        ("datatype", custom),
+        ("nodeKind", custom),
+        ("nodeKind", "Warning"),
+        ("pattern", "Violation"),
+        ("qualifiedMinCount", custom),
+        ("sparql", custom),
+    ]
+    .iter()
+    .map(|(c, s)| (c.to_string(), s.to_string()))
+    .collect();
+    want.sort();
+    assert_eq!(got, want, "{j}");
+}
+
+/// #335, MEASURED AND NOT FIXED IN THIS REPOSITORY. This test pins the loss
+/// so that it cannot be mistaken for a report-writer bug, and so that it fails,
+/// by name, on the day the store starts keeping lexical forms.
+///
+/// W3C `core/node/maxExclusive-001` and `minExclusive-001` expect
+/// `sh:focusNode 4.0 ; sh:value 4.0`, i.e. `"4.0"^^xsd:decimal`, and the
+/// report says `"4"^^xsd:decimal`, a different RDF term. The cause is the
+/// store, not the validator or the writer: oxigraph 0.5.9 (the pinned fork at
+/// abf36ef adds only `Store::snapshot`) encodes a literal of a datatype it
+/// knows by VALUE (`storage/numeric_encoder.rs`: `parse_decimal_str` ->
+/// `EncodedTerm::DecimalLiteral`, and likewise for integer, boolean, double,
+/// float, dateTime and the rest) and decodes it in canonical form
+/// (`Literal::from(Decimal)`). The lexical form is gone at insert, for the
+/// data graph AND for the shapes graph, which `ShaclValidator` parses into a
+/// store of its own, so `sh:targetNode 4.0` already names `"4"` when the
+/// first query runs.
+///
+/// Nothing in this repository can recover the original term. Two distinct
+/// RDF terms, `"4.0"^^xsd:decimal` and `"4"^^xsd:decimal`, become ONE triple
+/// on load (first block below), so no side table keyed by the stored term can
+/// say which one a result was about. The repair belongs in the store's
+/// literal encoding. The same loss reaches verdicts, not only the report: a
+/// lexical constraint judges the canonical string, so `sh:pattern "\\.0$"`
+/// reports `"4.0"^^xsd:decimal`, whose lexical form matches (last block).
+///
+/// When this test fails because the store kept a lexical form: remove
+/// `maxExclusive-001` and `minExclusive-001` from `KNOWN_DIFFERENCES` in
+/// `tests/shacl_validation_report_w3c_test.rs`, raise its floor, close #335,
+/// and turn these assertions round.
+#[test]
+fn a_non_canonical_literal_is_canonicalised_by_the_store_before_validation_sees_it() {
+    const LOST: &str = "the store kept a lexical form it used to canonicalise: #335 may now be \
+                        fixable, see this test's doc comment";
+    let decimal = |lex: &str| format!("\"{lex}\"^^<http://www.w3.org/2001/XMLSchema#decimal>");
+
+    // The store: two distinct terms, one triple, written canonically.
+    let g = Arc::new(GraphStore::new());
+    let added = g
+        .load_turtle(
+            r#"@prefix ex: <http://ex.org/> .
+               @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+               ex:a ex:p "4.0"^^xsd:decimal , "4"^^xsd:decimal ."#,
+            None,
+        )
+        .unwrap();
+    assert_eq!(added, 1, "{LOST}");
+    let nt = g.serialize("ntriples").unwrap();
+    assert!(nt.contains(&decimal("4")) && !nt.contains(&decimal("4.0")), "{LOST}:\n{nt}");
+
+    // sh:value of a data-graph value written "4.0".
+    let data = r#"@prefix ex: <http://ex.org/> .
+                  @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+                  ex:a a ex:Person ; ex:age "4.0"^^xsd:decimal ."#;
+    let datatype = r#"@prefix sh: <http://www.w3.org/ns/shacl#> .
+                      @prefix ex: <http://ex.org/> .
+                      @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+                      ex:S a sh:NodeShape ; sh:targetClass ex:Person ;
+                        sh:property [ sh:path ex:age ; sh:datatype xsd:integer ] ."#;
+    let j = json_report(data, datatype);
+    assert_eq!(value_for(&j, "datatype"), Some(decimal("4")), "{LOST}: {j}");
+
+    // A focus node written "4.0" in the shapes graph, handed in as text.
+    let target = r#"@prefix sh: <http://www.w3.org/ns/shacl#> .
+                    @prefix ex: <http://ex.org/> .
+                    ex:S a sh:NodeShape ; sh:targetNode 4.0 ; sh:maxExclusive 4 ."#;
+    let j = json_report("@prefix ex: <http://ex.org/> . ex:x ex:y ex:z .", target);
+    assert_eq!(j["violations"][0]["focus_node"], decimal("4"), "{LOST}: {j}");
+    assert_eq!(j["violations"][0]["value"], decimal("4"), "{LOST}: {j}");
+
+    // The verdict consequence. SHACL: STR("4.0"^^xsd:decimal) is "4.0", which
+    // matches, so this conforms. The engine sees "4" and reports it.
+    let pattern = r#"@prefix sh: <http://www.w3.org/ns/shacl#> .
+                     @prefix ex: <http://ex.org/> .
+                     ex:S a sh:NodeShape ; sh:targetClass ex:Person ;
+                       sh:property [ sh:path ex:age ; sh:pattern "\\.0$" ] ."#;
+    let j = json_report(data, pattern);
+    assert_eq!(j["violation_count"], 1, "{LOST}: {j}");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
