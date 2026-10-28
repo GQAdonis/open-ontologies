@@ -170,12 +170,14 @@ All notable changes to Open Ontologies are documented here.
   evaluated (measured over every XSD datatype; pinned in
   `tests/datatype_preservation_test.rs` and
   `inside_a_query_a_known_datatype_literal_is_still_read_by_value`).
+
 - **A projection-entailment goal written with a literal is asked as written**
   (consequence of #335). Goals are still round-tripped through a store, but the
   store no longer respells `"01"^^xsd:integer` as `"1"`, so a goal `"01"` asked
   of a source that says `"1"` is `ungrounded_in_source`, where it used to come
   back `preserved_asserted`. One value, two terms, which is what the checker
   has always done.
+
 - **A `sh:datatype` skipped for an integer-derived type or `xsd:dateTimeStamp`
   names the real cause.** The skip reason said the store does not preserve the
   datatype; since #335 it does, and what cannot report it is `DATATYPE()` in the
