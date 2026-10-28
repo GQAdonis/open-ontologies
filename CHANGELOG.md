@@ -44,6 +44,17 @@ All notable changes to Open Ontologies are documented here.
   `tests/shacl_validation_report_w3c_test.rs` with their causes, which include
   an `sh:or` false negative on IRI and ill-typed values.
 
+- **`reason --phase-timeout-ms` and `--classify-timeout-ms`** (#339). They set
+  the two `owl-dl` wall clocks for one run, in milliseconds, with `0` meaning
+  no limit, as in `config.toml`. The precedence is the flag, then `[reasoner]`
+  in `<data-dir>/config.toml`, then the default (10 000 and 180 000). No
+  environment variable sets either clock. The `budget` block reports the
+  values in force. A daemon fixes its clocks when it starts, and it serves
+  every client from one process. For that reason a `reason` that carries
+  either flag is never proxied. While a daemon is up, the command exits 1 and
+  names `--no-connect`, because a local run would read a different store from
+  the graph the daemon holds. In memory mode, that local store is empty.
+
 ### Fixed
 
 - **MCP `onto_lint` and `onto_diff`, and CLI `diff`, read RDF/XML and
@@ -56,6 +67,28 @@ All notable changes to Open Ontologies are documented here.
   `<#Dog>` is one IRI in both versions and adding a class reports `added: 1,
   removed: 0`, not every triple. A file CLI `diff` cannot read is reported as
   JSON naming it (`Cannot read <path>: …`), as `onto_diff` does.
+
+- **One-shot CLI commands honour `[reasoner]` and the rest of
+  `<data-dir>/config.toml`** (#339). `setup()` loaded the file and kept only
+  `[storage]`. `runtime::init_from_config` ran only in `serve`, `serve-http`
+  and `serve-unix`. So `reason --profile owl-dl` always ran with a 10 000 ms
+  phase budget and a 180 000 ms ceiling, whatever the file said. Its `budget`
+  block then reported those defaults as the configuration. `setup()` now calls
+  `init_from_config` with the config it already loads. That function only
+  stores atomics, and it overwrites them, so it loads no model and can safely
+  run again. The same change applies `[cache]`, `[feedback]`, `[repo]`,
+  `[imports]`, `[webhook]` and `[language]` to one-shot commands and `batch`.
+  The servers already applied them. MEASURED with
+  `tests/cli_reasoner_config_test.rs`: on main 9e73d951, a config of
+  `tableaux_test_timeout_ms = 200` reported `phase_timeout_ms: 10000`. It now
+  reports 200. A proxied run is unchanged, because `daemon start` passes
+  `<data-dir>/config.toml` to `serve-http`. Measured on this branch, a
+  proxied run reported 200 and 60 000 from the file. One committed artifact
+  showed the bug: `docs/assets/hqdm/owl-dl.json` named
+  `tableaux_test_timeout_ms = 120000` in its `source` while its `budget` block
+  reported 10000 and 180000. Rerun with the fix, the same command reports
+  120000 and 900000 and every verdict field is unchanged (39 unsatisfiable,
+  none undetermined), so only the `budget` block was replaced.
 
 - **`diff` and `drift` no longer hang on a symmetric blank-node graph** (#293).
   Both canonicalised blank nodes through oxrdf's RDFC-1.0, which sets no limit

@@ -19,10 +19,10 @@
  "algorithm": "tableaux",
  "budget": {
   "binding_bound": "phase",
-  "classify_timeout_ms": 180000,
-  "note": "classify_timeout_ms (180000 ms) cannot be the bound that stops this run: 5 phases at 10000 ms each cap it at 50000 ms. It is enforced as a ceiling over every phase and will not fire at this setting. The bound in force is the phase budget; lower classify_timeout_ms below 50000 to make it the binding one.",
-  "phase_timeout_ms": 10000,
-  "phase_worst_case_ms": 50000,
+  "classify_timeout_ms": 900000,
+  "note": "classify_timeout_ms (900000 ms) cannot be the bound that stops this run: 5 phases at 120000 ms each cap it at 600000 ms. It is enforced as a ceiling over every phase and will not fire at this setting. The bound in force is the phase budget; lower classify_timeout_ms below 600000 to make it the binding one.",
+  "phase_timeout_ms": 120000,
+  "phase_worst_case_ms": 600000,
   "phases": [
    "consistency",
    "satisfiability",
