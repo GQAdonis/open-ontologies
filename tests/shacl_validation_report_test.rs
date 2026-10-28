@@ -211,7 +211,9 @@ ex:S a sh:NodeShape ; sh:targetClass ex:Nobody ;
 
 #[test]
 fn a_custom_severity_iri_and_a_language_tag_survive_into_the_graph() {
-    // The JSON keeps `"MySeverity"` and `"Too old"`; the graph needs the terms.
+    // The JSON keeps `"Too old"` without its tag; the graph needs the terms.
+    // The severity is outside the SHACL namespace, so the JSON carries its
+    // full IRI (#334) rather than a local name read back as `sh:MySeverity`.
     let shapes = r#"
 @prefix sh: <http://www.w3.org/ns/shacl#> .
 @prefix ex: <http://ex.org/> .
@@ -222,13 +224,65 @@ ex:S a sh:NodeShape ; sh:targetClass ex:Person ;
                   sh:severity sev:MySeverity ; sh:message "Too old"@en ] .
 "#;
     let j = json_report(DATA, shapes);
-    assert_eq!(j["violations"][0]["severity"], "MySeverity", "{j}");
+    assert_eq!(j["violations"][0]["severity"], "http://ex.org/sev#MySeverity", "{j}");
     assert_eq!(j["violations"][0]["message"], "Too old", "{j}");
     let s = parsed(&rdf_report(DATA, shapes, ReportFormat::Turtle), RdfFormat::Turtle);
     assert!(ask(
         &s,
         r#"?x sh:resultSeverity <http://ex.org/sev#MySeverity> ; sh:resultMessage "Too old"@en"#
     ));
+}
+
+/// #334, W3C `core/misc/severity-002`. The JSON `severity` was `sh:severity`
+/// cut after its last `#` on every path, so a custom severity in a hash
+/// namespace came out as `"MySeverity"` and every reader, the W3C full-tuple
+/// comparison included, had to guess its namespace and guessed `sh:`. (One in
+/// a slash namespace survived whole, by accident of where the cut fell.) The
+/// three SHACL severities keep their local name, which is what existing
+/// readers match on; any other IRI is carried whole. Checked on each path that
+/// reads `sh:severity`: a node shape's own constraint, a property shape, a
+/// qualified shape and `sh:sparql`.
+#[test]
+fn a_custom_severity_keeps_its_namespace_in_the_json_on_every_path() {
+    let shapes = r#"
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://ex.org/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix sev: <http://ex.org/sev#> .
+ex:NodeLevel a sh:NodeShape ; sh:targetNode ex:alice ;
+    sh:nodeKind sh:BlankNode ; sh:severity sev:MySeverity .
+ex:PropLevel a sh:NodeShape ; sh:targetClass ex:Person ;
+    sh:property [ sh:path ex:age ; sh:datatype xsd:integer ; sh:severity sev:MySeverity ] ;
+    sh:property [ sh:path ex:home ; sh:nodeKind sh:IRI ; sh:severity sh:Warning ] ;
+    sh:property [ sh:path ex:code ; sh:pattern "^[0-9]+$" ] ;
+    sh:property [ sh:path ex:knows ; sh:qualifiedValueShape [ sh:class ex:Person ] ;
+                  sh:qualifiedMinCount 1 ; sh:severity sev:MySeverity ] .
+ex:SparqlLevel a sh:NodeShape ; sh:targetClass ex:Person ;
+    sh:sparql [ sh:severity sev:MySeverity ;
+        sh:select "SELECT $this WHERE { $this <http://ex.org/home> ?h }" ] .
+"#;
+    let j = json_report(DATA, shapes);
+    let mut got: Vec<(String, String)> = j["violations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| (v["constraint"].as_str().unwrap().to_string(), v["severity"].as_str().unwrap().to_string()))
+        .collect();
+    got.sort();
+    let custom = "http://ex.org/sev#MySeverity";
+    let mut want: Vec<(String, String)> = [
+        ("datatype", custom),
+        ("nodeKind", custom),
+        ("nodeKind", "Warning"),
+        ("pattern", "Violation"),
+        ("qualifiedMinCount", custom),
+        ("sparql", custom),
+    ]
+    .iter()
+    .map(|(c, s)| (c.to_string(), s.to_string()))
+    .collect();
+    want.sort();
+    assert_eq!(got, want, "{j}");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -46,6 +46,16 @@ All notable changes to Open Ontologies are documented here.
 
 ### Fixed
 
+- **A custom `sh:severity` keeps its namespace in the JSON report** (#334).
+  Every path set `severity` to the text after the last `#` of the declared
+  IRI, and every reader takes a bare name as `sh:`, so W3C
+  `core/misc/severity-002`'s `ex:MySeverity` read back as `sh:MySeverity`
+  (one in a slash namespace survived whole only because it has no `#`).
+  `sh:Violation`, `sh:Warning` and `sh:Info` are still `"Violation"`,
+  `"Warning"` and `"Info"`; any IRI outside the SHACL namespace is now written
+  whole, on node-shape, property-shape, qualified and `sh:sparql` results. The
+  RDF report already wrote the declared term. W3C full-tuple column 52 to 53
+  PASS; gated column unchanged at 61.
 - **A value that is not a well-typed literal of D no longer satisfies a
   `sh:datatype D` test anywhere in the SHACL engine** (#333). The test was
   spliced as `DATATYPE(?v) = <D>`, a SPARQL type error for an IRI or blank

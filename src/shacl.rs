@@ -529,10 +529,7 @@ impl ShaclValidator {
                 let pick = |k: &str| own.iter().find(|(p, _)| p == k).map(|(_, v)| v.clone());
                 let own_message = pick("message").map(|m| strip_quotes(&m)).unwrap_or_default();
                 let own_severity = pick("severity")
-                    .map(|s| {
-                        let s = strip_angle_brackets(&s);
-                        s.rsplit('#').next().unwrap_or("Violation").to_string()
-                    })
+                    .map(|s| severity_name(&s))
                     .unwrap_or_else(|| "Violation".to_string());
                 let own_flags = pick("flags").map(|f| strip_quotes(&f));
                 let own_rdf = RdfTerms::new(
@@ -1180,13 +1177,7 @@ impl ShaclValidator {
                 let q_message = row.get("message").map(|m| strip_quotes(m)).unwrap_or_default();
                 let q_severity = row
                     .get("severity")
-                    .map(|s| {
-                        strip_angle_brackets(s)
-                            .rsplit('#')
-                            .next()
-                            .unwrap_or("Violation")
-                            .to_string()
-                    })
+                    .map(|s| severity_name(s))
                     .unwrap_or_else(|| "Violation".to_string());
                 let q_rdf = RdfTerms::new(
                     row.get("severity").cloned(),
@@ -1345,10 +1336,7 @@ impl ShaclValidator {
                 // sh:severity, defaulting to sh:Violation per the SHACL spec.
                 let severity = prop
                     .get("severity")
-                    .map(|s| {
-                        let s = strip_angle_brackets(s);
-                        s.rsplit('#').next().unwrap_or("Violation").to_string()
-                    })
+                    .map(|s| severity_name(s))
                     .unwrap_or_else(|| "Violation".to_string());
                 let rdf = RdfTerms::new(
                     prop.get("severity").cloned(),
@@ -2090,13 +2078,7 @@ impl ShaclValidator {
                     .unwrap_or_default();
                 let severity = constraint
                     .get("severity")
-                    .map(|s| {
-                        strip_angle_brackets(s)
-                            .rsplit('#')
-                            .next()
-                            .unwrap_or("Violation")
-                            .to_string()
-                    })
+                    .map(|s| severity_name(s))
                     .unwrap_or_else(|| "Violation".to_string());
 
                 // SHACL-SPARQL 5.3.2: `$this` is pre-bound to the focus node,
@@ -3231,12 +3213,11 @@ fn attribute(
 /// store printed them, for the RDF report and for nothing else.
 ///
 /// The JSON report keeps a reduced form of both and cannot be changed without
-/// breaking its readers: `severity` is the IRI's local name and `message` is
-/// the literal's lexical value. Neither reduction is reversible. W3C
-/// `core/misc/severity-002` declares `sh:severity ex:MySeverity`, which the
-/// JSON carries as `"MySeverity"` and a writer reading it back can only guess
-/// the namespace of; `core/misc/message-001` declares `"Test message"@en`, and
-/// the language tag is gone. SHACL 3.6.2 makes `sh:resultSeverity` the shape's
+/// breaking its readers: `severity` is [`severity_name`], the local name for
+/// SHACL's own severities and the full IRI for any other, and `message` is
+/// the literal's lexical value. The message reduction is not reversible:
+/// `core/misc/message-001` declares `"Test message"@en`, and the language tag
+/// is gone. SHACL 3.6.2 makes `sh:resultSeverity` the shape's
 /// `sh:severity` and `sh:resultMessage` a copy of its `sh:message`, so the
 /// writer needs the terms as written. They travel inside each violation under
 /// [`crate::shacl_report::RDF_TERMS_KEY`] and the JSON renderer removes them.
@@ -3331,6 +3312,26 @@ fn lexical_space_regex(datatype: &str) -> Option<String> {
     // that named a decimal, double, float or dateTime could not be evaluated
     // at all.
     Some(re.replace('\\', "\\\\"))
+}
+
+/// The JSON `severity` of a declared `sh:severity` term: the local name for
+/// an IRI in the SHACL namespace (`"Violation"`, `"Warning"`, `"Info"`, which
+/// existing readers match on), and the full IRI for any other.
+///
+/// Every path used to take the text after the last `#` (#334). That is
+/// reversible only if the reader knows the namespace, and the readers,
+/// `tests/w3c_shacl_conformance_test.rs` and `tools/shacl_differential.py`,
+/// read a bare name as `sh:`. So W3C `core/misc/severity-002`'s
+/// `ex:MySeverity`, in a hash namespace, came back as `sh:MySeverity`, a
+/// different severity, while one in a slash namespace survived whole by
+/// accident of where the cut fell. Both readers already take a name
+/// containing `:` as a full IRI, so they now read every severity exactly.
+fn severity_name(raw: &str) -> String {
+    let iri = strip_angle_brackets(raw);
+    match iri.strip_prefix("http://www.w3.org/ns/shacl#") {
+        Some(local) => local.to_string(),
+        None => iri,
+    }
 }
 
 /// `<http://www.w3.org/ns/shacl#class>` -> `class`, for the node-level rows.
