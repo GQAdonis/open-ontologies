@@ -556,7 +556,7 @@ impl ShaclValidator {
                                     "shape": strip_angle_brackets(&shape_iri),
                                     "constraint": "sh:datatype",
                                     "reason": format!(
-                                        "the store does not preserve <{dt}>; a conforming value and a widened one are the same term, so this cannot be decided"
+                                        "the SPARQL evaluator reads <{dt}> as the type it derives from, so DATATYPE() cannot tell a conforming value from one of that type; this cannot be decided"
                                     ),
                                 }));
                                 continue;
@@ -796,7 +796,7 @@ impl ShaclValidator {
             // and the run came back CLEAN. Same defect in sh:in and sh:not.
             let mut or_alternatives: HashMap<String, Vec<String>> = HashMap::new();
             let mut or_unsupported: HashSet<String> = HashSet::new();
-            // Property shape -> a member datatype the store does not preserve.
+            // Property shape -> a member datatype DATATYPE() cannot report.
             // The direct sh:datatype path refuses that question; a member
             // answering it reported every widened value as matching nothing.
             let mut or_unpreserved: HashMap<String, String> = HashMap::new();
@@ -1507,7 +1507,7 @@ impl ShaclValidator {
                 // sh:datatype
                 if let Some(dt_str) = prop.get("datatype") {
                     let dt = strip_angle_brackets(dt_str);
-                    // The store cannot tell these apart from the type they are
+                    // DATATYPE() cannot tell these apart from the type they are
                     // derived from, so the constraint is not decidable here and
                     // must not be answered. Asking anyway produced a violation
                     // for every value that satisfied the shape: nine of them in
@@ -2843,10 +2843,10 @@ fn compile_node_shape(
             )),
             "datatype" => {
                 // Refused for the same reason as on a property inside the
-                // shape, below: the store cannot tell the datatype from the
+                // shape, below: DATATYPE() cannot tell the datatype from the
                 // one it derives from. Only the property form was guarded, so
                 // `sh:node` to a shape declaring `sh:datatype xsd:int` itself
-                // reported every value the store had widened to xsd:integer.
+                // reported every value DATATYPE() read as xsd:integer.
                 let dt = strip_angle_brackets(obj);
                 if datatype_is_indistinguishable_in_store(&dt) {
                     return None;
@@ -2932,8 +2932,8 @@ fn compile_node_shape(
         }
         if let Some(dt) = row.get("datatype") {
             let dt = strip_angle_brackets(dt);
-            // The store cannot tell these apart from the type they derive from,
-            // so a nested shape resting on one is not decidable either.
+            // DATATYPE() cannot tell these apart from the type they derive
+            // from, so a nested shape resting on one is not decidable either.
             if datatype_is_indistinguishable_in_store(&dt) {
                 return None;
             }
@@ -2995,21 +2995,25 @@ fn node_kind_test(node_kind: &str, var: &str) -> Option<String> {
     })
 }
 
-/// Datatype IRIs the storage layer does not preserve.
+/// Datatype IRIs that `DATATYPE()` cannot report, so no SPARQL test here can
+/// decide them.
 ///
-/// oxigraph 0.5 encodes a literal by value, and in `numeric_encoder.rs` twelve
-/// XSD integer-derived datatype IRIs all route to `parse_integer_str`, which
-/// yields `EncodedTerm::IntegerLiteral` — one variant, carrying no datatype IRI.
-/// Reading back can only reconstruct `xsd:integer`. `xsd:dateTimeStamp` collapses
-/// into `xsd:dateTime` the same way. The Turtle parser is correct; the loss is at
-/// storage. That it is a defect rather than a deliberate simplification is settled
-/// by `xsd:yearMonthDuration` and `xsd:dayTimeDuration`, equally derived, which
-/// have their own encodings and survive intact.
+/// The twelve XSD integer-derived types and `xsd:dateTimeStamp`. Since #335 the
+/// store keeps them: the pinned oxigraph (oxigraph/oxigraph#2010) gives
+/// `"5"^^xsd:int` back as written, where 0.5.9 encoded it as
+/// `EncodedTerm::IntegerLiteral` and gave back `"5"^^xsd:integer`. The SPARQL
+/// evaluator, `spareval`, is unpatched and still maps each of these IRIs to its
+/// base type's value before any function sees it, so inside a query
+/// `DATATYPE("5"^^xsd:int)` is `xsd:integer` and `DATATYPE` of an
+/// `xsd:dateTimeStamp` is `xsd:dateTime`, whether the literal came from the
+/// store or the query text. Measured on the new pin over every XSD datatype:
+/// exactly these thirteen; `tests/datatype_preservation_test.rs` pins the set
+/// in both directions. `xsd:yearMonthDuration` and `xsd:dayTimeDuration`,
+/// equally derived, have their own encodings and answer correctly.
 ///
-/// A `sh:datatype` constraint naming one of these cannot be decided against the
-/// store: a conforming value and a widened one are the same term by the time the
-/// query runs. Answering anyway reports a violation for every value that in fact
-/// satisfies the shape.
+/// A `sh:datatype` test naming one of these cannot be decided by `DATATYPE()`:
+/// a conforming value and one of the base type answer alike. Answering anyway
+/// reports a violation for every value that in fact satisfies the shape.
 fn datatype_is_indistinguishable_in_store(datatype: &str) -> bool {
     const XSD: &str = "http://www.w3.org/2001/XMLSchema#";
     let Some(local) = datatype.strip_prefix(XSD) else {
@@ -3046,9 +3050,9 @@ fn unpreserved_datatype_skip(shape: &str, constraint: &str, path: &str, datatype
         "constraint": constraint,
         "path": path,
         "datatype": datatype,
-        "reason": "the store does not preserve this datatype IRI, so a value \
-                   carrying it is indistinguishable from one carrying the type \
-                   it derives from; the constraint was not evaluated",
+        "reason": "the SPARQL evaluator reads this datatype IRI as the type it \
+                   derives from, so DATATYPE() cannot tell a value carrying it \
+                   from one carrying that type; the constraint was not evaluated",
     })
 }
 
@@ -3487,9 +3491,11 @@ fn count_bound(
 ///
 /// SHACL 4.2.1, 4.2.2, 4.4.1, 4.4.2 and 4.7.3 require these values to be
 /// literals of datatype `xsd:integer`. The datatype is checked, not only the
-/// lexical form, because the store does not keep the lexical form of a
-/// decimal: Turtle `1.0` comes back as `"1"^^xsd:decimal`, which a lexical
-/// parse reads as 1 (measured; the verified evaluator's `readNat` in
+/// lexical form, because a lexical parse alone reads `"1"^^xsd:decimal` as 1.
+/// Until #335 the store made that common: Turtle `1.0` came back as
+/// `"1"^^xsd:decimal`. The pinned store now keeps `"1.0"`, which no longer
+/// parses, but the spelling `"1"^^xsd:decimal` is still a decimal and still
+/// refused here (the verified evaluator's `readNat` in
 /// `lean/Shacl/Compile.lean` reads only the lexical form and does evaluate it).
 /// A negative value is refused rather than read by the letter of the spec, where
 /// `sh:minCount -1` holds of everything and `sh:maxCount -1` of nothing: no

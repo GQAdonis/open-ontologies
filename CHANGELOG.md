@@ -176,6 +176,12 @@ All notable changes to Open Ontologies are documented here.
   of a source that says `"1"` is `ungrounded_in_source`, where it used to come
   back `preserved_asserted`. One value, two terms, which is what the checker
   has always done.
+- **A `sh:datatype` skipped for an integer-derived type or `xsd:dateTimeStamp`
+  names the real cause.** The skip reason said the store does not preserve the
+  datatype; since #335 it does, and what cannot report it is `DATATYPE()` in the
+  SPARQL evaluator. The reason now says so (`... so DATATYPE() cannot tell a
+  value carrying it from one carrying that type ...`). The set of datatypes and
+  every verdict are unchanged, by measurement on the new pin.
 - **A datatype the store cannot tell apart is refused inside `sh:or`,
   `sh:not` and `sh:qualifiedValueShape`, as it already was on its own.** The
   store widens xsd:int, xsd:nonNegativeInteger and the other integer-derived

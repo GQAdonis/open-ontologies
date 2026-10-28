@@ -1,14 +1,15 @@
-//! `sh:datatype` naming a type the store does not preserve.
+//! `sh:datatype` naming a type `DATATYPE()` cannot report.
 //!
-//! oxigraph 0.5 encodes twelve XSD integer-derived datatypes, and
-//! `xsd:dateTimeStamp`, into the encoding of the type they derive from, dropping
-//! the datatype IRI. See `datatype_is_indistinguishable_in_store`, and
-//! `datatype_preservation_test` for the isolation showing the parser is correct
-//! and the store is not.
+//! The twelve XSD integer-derived datatypes and `xsd:dateTimeStamp`. Oxigraph
+//! 0.5.9's store dropped their IRIs; the pinned store keeps them since #335, but
+//! the SPARQL evaluator still reads each as the type it derives from, so
+//! `DATATYPE("0"^^xsd:nonNegativeInteger)` is `xsd:integer`. See
+//! `datatype_is_indistinguishable_in_store`, and `datatype_preservation_test`
+//! for the isolation of parser, store and evaluator.
 //!
 //! The consequence for validation is that a `sh:datatype xsd:nonNegativeInteger`
-//! constraint cannot be decided: by the time the query runs, a conforming literal
-//! and a widened one are the same term. Asking anyway reported a violation
+//! constraint cannot be decided: by the time the test runs, a conforming literal
+//! and one of the base type answer alike. Asking anyway reported a violation
 //! against every value that satisfied the shape — nine of them in
 //! `jsonld-escaping-conformance`, which is how the storage defect was found.
 //!
@@ -116,7 +117,7 @@ fn plain_integer_is_still_evaluated() {
 // consults `datatype_is_indistinguishable_in_store` and refuses to answer. The
 // paths that test a datatype as a MEMBER of something else did not, so the
 // question the direct path refuses was answered anyway, wrongly, by them: every
-// value the store had widened to `xsd:integer` failed a member of
+// value `DATATYPE()` read as `xsd:integer` failed a member of
 // `xsd:nonNegativeInteger`. Each test below names its path, asserts the refusal
 // the direct path gives, and asserts that no violation is reported.
 
