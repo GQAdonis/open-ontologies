@@ -49,15 +49,18 @@ use std::sync::Arc;
 /// conformance baseline records as PASS produce a report that matches the
 /// expected one on every compared predicate. 49 since #333 (28 Oct 2026, same
 /// suite commit), when `core/property/or-datatypes-001` started reporting all
-/// three of its `sh:or` violations. The other seven are named below.
-const MATCHED_FLOOR: usize = 49;
+/// three of its `sh:or` violations. 51 since #335 (28 Oct 2026, same suite
+/// commit), when the oxigraph pin started keeping `"4.0"^^xsd:decimal` as
+/// written and `core/node/maxExclusive-001` and `minExclusive-001` matched.
+/// The other five are named below.
+const MATCHED_FLOOR: usize = 51;
 
 /// The PASS cases whose full report differs, each with the measured cause.
 /// None is a defect of the report writer: each graph says what the JSON
 /// already said. They are the gaps the set comparison in
 /// `w3c_shacl_conformance_test.rs` cannot see, which is why this file exists.
 /// A case not listed here that stops matching fails by name.
-const KNOWN_DIFFERENCES: [(&str, &str); 7] = [
+const KNOWN_DIFFERENCES: [(&str, &str); 5] = [
     (
         "core/node/class-003",
         "ex:John is selected by sh:targetClass AND sh:targetNode and reported once per target \
@@ -68,16 +71,6 @@ const KNOWN_DIFFERENCES: [(&str, &str); 7] = [
         "same cause: InvalidInstance1 is selected by sh:targetClass and sh:targetSubjectsOf and \
          reported twice, 3 results for 2",
     ),
-    (
-        "core/node/maxExclusive-001",
-        "#335, measured: oxigraph encodes a known-datatype literal by value at insert \
-         (numeric_encoder.rs, parse_decimal_str) and decodes it canonically, in the shapes \
-         store as in the data store, so sh:targetNode 4.0 is \"4\"^^xsd:decimal before the \
-         first query runs. Not recoverable here: \"4.0\" and \"4\" load as one triple. Pinned \
-         by a_non_canonical_literal_is_canonicalised_by_the_store_before_validation_sees_it \
-         in tests/shacl_validation_report_test.rs",
-    ),
-    ("core/node/minExclusive-001", "same cause as maxExclusive-001"),
     (
         "core/property/lessThan-001",
         "the query selects DISTINCT ?focus, so results carry no sh:value; projecting it changes \

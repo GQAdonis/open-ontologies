@@ -231,9 +231,13 @@ pub fn is_ofn_format(name: &str) -> bool {
 /// cannot disagree about what was left out.
 ///
 /// The document's triples are handed over as parsed, without passing through
-/// a store: Oxigraph's store re-types an `xsd:nonNegativeInteger` literal as
-/// `xsd:integer` (measured on `owl:minCardinality 2`), and every cardinality
-/// that had happened to would be refused as outside Table 1.
+/// a store, so nothing between the file and the writer can respell a term.
+/// That was first done because Oxigraph 0.5.9's store re-typed an
+/// `xsd:nonNegativeInteger` literal as `xsd:integer` (measured on
+/// `owl:minCardinality 2`), and every such cardinality would have been refused
+/// as outside Table 1. The pinned store keeps literals as written since #335
+/// (`tests/datatype_preservation_test.rs`); reading without one is kept
+/// because it is the shorter path, not because a store would now be wrong.
 pub fn convert_file(path: &str) -> anyhow::Result<OfnOutput> {
     let (quads, prefixes) = crate::graph::GraphStore::read_file_with_prefixes(path)?;
     let triples: Vec<Triple> = quads.into_iter().map(Triple::from).collect();

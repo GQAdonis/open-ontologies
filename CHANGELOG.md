@@ -150,6 +150,40 @@ All notable changes to Open Ontologies are documented here.
   and it no longer claims that the ceiling "cannot" fire, since that was
   arithmetic about the tableaux and not about the run.
 
+- **The store gives a literal back as it was written** (#335; the store fix
+  is oxigraph/oxigraph#2010 by Fabio Rovai, backported onto the pinned fork
+  as rev 6409fa1c). Oxigraph 0.5.9 stored every literal of an XSD datatype it
+  could value-encode by value and gave it back in canonical form:
+  `"4.0"^^xsd:decimal` came back as `"4"`, `"1"^^xsd:boolean` as `"true"`,
+  `"5"^^xsd:int` as `"5"^^xsd:integer`, and `"4.0"` and `"4"` loaded as one
+  triple. The pinned store value-encodes a literal only when decoding gives it
+  back as written. So `sh:value` and a literal focus node now carry the term as
+  written (W3C `core/node/maxExclusive-001` and `minExclusive-001` match their
+  expected reports: report match 49 to 51 of 56; gated column 61 and full-tuple
+  column 53 unchanged, baseline byte-identical), a load-then-serialise round
+  trip no longer rewrites literals, and `asserted.tsv` carries literals as
+  written. NOT fixed, because the SPARQL evaluator (`spareval`) is unpatched:
+  inside a query `STR("4.0"^^xsd:decimal)` is still `"4"` and
+  `DATATYPE("5"^^xsd:int)` still `xsd:integer`, so `sh:pattern "\.0$"` still
+  reports `"4.0"^^xsd:decimal`, and `sh:datatype` naming one of the twelve
+  integer-derived types or `xsd:dateTimeStamp` is still recorded as not
+  evaluated (measured over every XSD datatype; pinned in
+  `tests/datatype_preservation_test.rs` and
+  `inside_a_query_a_known_datatype_literal_is_still_read_by_value`).
+
+- **A projection-entailment goal written with a literal is asked as written**
+  (consequence of #335). Goals are still round-tripped through a store, but the
+  store no longer respells `"01"^^xsd:integer` as `"1"`, so a goal `"01"` asked
+  of a source that says `"1"` is `ungrounded_in_source`, where it used to come
+  back `preserved_asserted`. One value, two terms, which is what the checker
+  has always done.
+
+- **A `sh:datatype` skipped for an integer-derived type or `xsd:dateTimeStamp`
+  names the real cause.** The skip reason said the store does not preserve the
+  datatype; since #335 it does, and what cannot report it is `DATATYPE()` in the
+  SPARQL evaluator. The reason now says so (`... so DATATYPE() cannot tell a
+  value carrying it from one carrying that type ...`). The set of datatypes and
+  every verdict are unchanged, by measurement on the new pin.
 - **A datatype the store cannot tell apart is refused inside `sh:or`,
   `sh:not` and `sh:qualifiedValueShape`, as it already was on its own.** The
   store widens xsd:int, xsd:nonNegativeInteger and the other integer-derived

@@ -319,54 +319,44 @@ ex:S a sh:NodeShape ; sh:targetClass ex:Person ; {severity}
     }
 }
 
-/// #335, MEASURED AND NOT FIXED IN THIS REPOSITORY. This test pins the loss
-/// so that it cannot be mistaken for a report-writer bug, and so that it fails,
-/// by name, on the day the store starts keeping lexical forms.
+/// #335, fixed in the store. W3C `core/node/maxExclusive-001` and
+/// `minExclusive-001` expect `sh:focusNode 4.0 ; sh:value 4.0`, i.e.
+/// `"4.0"^^xsd:decimal`, and the report said `"4"^^xsd:decimal`, a different
+/// RDF term. Oxigraph 0.5.9 encoded a literal of a datatype it knew by value
+/// at insert and decoded it canonically, in the data store and in the shapes
+/// store alike, so "4.0" and "4" loaded as ONE triple and no code here could
+/// say which one a result was about. The pinned fork (oxigraph/oxigraph#2010)
+/// value-encodes a literal only when decoding gives it back as written, and
+/// stores any other as a generic typed literal.
 ///
-/// W3C `core/node/maxExclusive-001` and `minExclusive-001` expect
-/// `sh:focusNode 4.0 ; sh:value 4.0`, i.e. `"4.0"^^xsd:decimal`, and the
-/// report says `"4"^^xsd:decimal`, a different RDF term. The cause is the
-/// store, not the validator or the writer: oxigraph 0.5.9 (the pinned fork at
-/// abf36ef adds only `Store::snapshot`) encodes a literal of a datatype it
-/// knows by VALUE (`storage/numeric_encoder.rs`: `parse_decimal_str` ->
-/// `EncodedTerm::DecimalLiteral`, and likewise for integer, boolean, double,
-/// float, dateTime and the rest) and decodes it in canonical form
-/// (`Literal::from(Decimal)`). The lexical form is gone at insert, for the
-/// data graph AND for the shapes graph, which `ShaclValidator` parses into a
-/// store of its own, so `sh:targetNode 4.0` already names `"4"` when the
-/// first query runs.
-///
-/// Nothing in this repository can recover the original term. Two distinct
-/// RDF terms, `"4.0"^^xsd:decimal` and `"4"^^xsd:decimal`, become ONE triple
-/// on load (first block below), so no side table keyed by the stored term can
-/// say which one a result was about. The repair belongs in the store's
-/// literal encoding. The same loss reaches verdicts, not only the report: a
-/// lexical constraint judges the canonical string, so `sh:pattern "\\.0$"`
-/// reports `"4.0"^^xsd:decimal`, whose lexical form matches (last block).
-///
-/// When this test fails because the store kept a lexical form: remove
-/// `maxExclusive-001` and `minExclusive-001` from `KNOWN_DIFFERENCES` in
-/// `tests/shacl_validation_report_w3c_test.rs`, raise its floor, close #335,
-/// and turn these assertions round.
+/// This test was the pin of the loss (it asserted one triple, `"4"` in
+/// `sh:value` and in the focus node); it now asserts the terms as written.
 #[test]
-fn a_non_canonical_literal_is_canonicalised_by_the_store_before_validation_sees_it() {
-    const LOST: &str = "the store kept a lexical form it used to canonicalise: #335 may now be \
-                        fixable, see this test's doc comment";
+fn a_non_canonical_literal_is_kept_as_written_and_reported_as_written() {
     let decimal = |lex: &str| format!("\"{lex}\"^^<http://www.w3.org/2001/XMLSchema#decimal>");
 
-    // The store: two distinct terms, one triple, written canonically.
+    // The store: two distinct terms are two triples, each written as given.
     let g = Arc::new(GraphStore::new());
     let added = g
         .load_turtle(
             r#"@prefix ex: <http://ex.org/> .
                @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
-               ex:a ex:p "4.0"^^xsd:decimal , "4"^^xsd:decimal ."#,
+               ex:a ex:p "4.0"^^xsd:decimal , "4"^^xsd:decimal .
+               ex:b ex:p "04"^^xsd:integer , "1"^^xsd:boolean , "1.0E0"^^xsd:double ."#,
             None,
         )
         .unwrap();
-    assert_eq!(added, 1, "{LOST}");
+    assert_eq!(added, 5, "\"4.0\" and \"4\" are two RDF terms and must be two triples");
     let nt = g.serialize("ntriples").unwrap();
-    assert!(nt.contains(&decimal("4")) && !nt.contains(&decimal("4.0")), "{LOST}:\n{nt}");
+    for written in [
+        decimal("4.0"),
+        decimal("4"),
+        "\"04\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string(),
+        "\"1\"^^<http://www.w3.org/2001/XMLSchema#boolean>".to_string(),
+        "\"1.0E0\"^^<http://www.w3.org/2001/XMLSchema#double>".to_string(),
+    ] {
+        assert!(nt.contains(&written), "{written} must come back as written:\n{nt}");
+    }
 
     // sh:value of a data-graph value written "4.0".
     let data = r#"@prefix ex: <http://ex.org/> .
@@ -378,24 +368,56 @@ fn a_non_canonical_literal_is_canonicalised_by_the_store_before_validation_sees_
                       ex:S a sh:NodeShape ; sh:targetClass ex:Person ;
                         sh:property [ sh:path ex:age ; sh:datatype xsd:integer ] ."#;
     let j = json_report(data, datatype);
-    assert_eq!(value_for(&j, "datatype"), Some(decimal("4")), "{LOST}: {j}");
+    assert_eq!(value_for(&j, "datatype"), Some(decimal("4.0")), "{j}");
+    let s = parsed(&rdf_report(data, datatype, ReportFormat::Turtle), RdfFormat::Turtle);
+    assert!(ask(&s, r#"?x sh:value ?v . FILTER(sameTerm(?v, "4.0"^^xsd:decimal))"#), "the RDF report too");
 
     // A focus node written "4.0" in the shapes graph, handed in as text.
     let target = r#"@prefix sh: <http://www.w3.org/ns/shacl#> .
                     @prefix ex: <http://ex.org/> .
                     ex:S a sh:NodeShape ; sh:targetNode 4.0 ; sh:maxExclusive 4 ."#;
     let j = json_report("@prefix ex: <http://ex.org/> . ex:x ex:y ex:z .", target);
-    assert_eq!(j["violations"][0]["focus_node"], decimal("4"), "{LOST}: {j}");
-    assert_eq!(j["violations"][0]["value"], decimal("4"), "{LOST}: {j}");
+    assert_eq!(j["violations"][0]["focus_node"], decimal("4.0"), "{j}");
+    assert_eq!(j["violations"][0]["value"], decimal("4.0"), "{j}");
+}
 
-    // The verdict consequence. SHACL: STR("4.0"^^xsd:decimal) is "4.0", which
-    // matches, so this conforms. The engine sees "4" and reports it.
+/// What #335's store fix does NOT reach, measured on the same pin. The SPARQL
+/// evaluator (`spareval`, unpatched in the fork) still turns a literal of a
+/// datatype it knows into its value before any function sees it, so inside a
+/// query `STR("4.0"^^xsd:decimal)` is `"4"` and `DATATYPE("5"^^xsd:int)` is
+/// `xsd:integer`, whether the literal came from the store or the query text.
+/// Two consequences stay in this engine:
+///
+/// * a lexical constraint judges the canonical string, so `sh:pattern "\\.0$"`
+///   reports a lone `"4.0"^^xsd:decimal`, whose lexical form matches;
+/// * `DATATYPE()` cannot tell the twelve integer-derived types or
+///   `xsd:dateTimeStamp` from their base type, so
+///   `datatype_is_indistinguishable_in_store` keeps refusing them
+///   (`tests/datatype_preservation_test.rs` pins that set).
+///
+/// When this fails, the evaluator keeps lexical forms: turn the `sh:pattern`
+/// assertion round and re-measure that set.
+#[test]
+fn inside_a_query_a_known_datatype_literal_is_still_read_by_value() {
+    const FIXED: &str = "the SPARQL evaluator now keeps the lexical form: see this test's doc comment";
+    let data = r#"@prefix ex: <http://ex.org/> .
+                  @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+                  ex:a a ex:Person ; ex:age "4.0"^^xsd:decimal ; ex:n "5"^^xsd:int ."#;
+    let g = store(data);
+    let json = g
+        .sparql_select("SELECT (STR(?a) AS ?s) (DATATYPE(?n) AS ?d) WHERE { ?x <http://ex.org/age> ?a ; <http://ex.org/n> ?n }")
+        .unwrap();
+    let row = &serde_json::from_str::<Value>(&json).unwrap()["results"][0];
+    assert_eq!(row["s"], "\"4\"", "{FIXED}: {json}");
+    assert_eq!(row["d"], "<http://www.w3.org/2001/XMLSchema#integer>", "{FIXED}: {json}");
+
     let pattern = r#"@prefix sh: <http://www.w3.org/ns/shacl#> .
                      @prefix ex: <http://ex.org/> .
                      ex:S a sh:NodeShape ; sh:targetClass ex:Person ;
                        sh:property [ sh:path ex:age ; sh:pattern "\\.0$" ] ."#;
     let j = json_report(data, pattern);
-    assert_eq!(j["violation_count"], 1, "{LOST}: {j}");
+    assert_eq!(j["violation_count"], 1, "{FIXED}: {j}");
+    assert_eq!(value_for(&j, "pattern"), Some("\"4.0\"^^<http://www.w3.org/2001/XMLSchema#decimal>".into()), "{j}");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -174,10 +174,10 @@ fn object_cardinalities_qualified_unqualified_and_qualified_by_thing() {
 
 #[test]
 fn cardinalities_are_typed_non_negative_integer_before_any_store_sees_them() {
-    // The store is not a witness for this: Oxigraph's value encoding writes
+    // The parser's own output is the witness. Oxigraph 0.5.9's store wrote
     // every integer-derived literal back as xsd:integer, so a store round
-    // trip cannot tell nonNegativeInteger from integer. The parser's own
-    // output can.
+    // trip could not tell nonNegativeInteger from integer; the pinned store
+    // keeps it since #335, but this asks the parser, which is what is meant.
     let triples = ofn::parse(&document("SubClassOf(:A ObjectMinCardinality(007 :r))")).unwrap();
     let card = triples
         .iter()
