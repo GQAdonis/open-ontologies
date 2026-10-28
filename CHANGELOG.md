@@ -90,6 +90,33 @@ All notable changes to Open Ontologies are documented here.
   120000 and 900000 and every verdict field is unchanged (39 unsatisfiable,
   none undetermined), so only the `budget` block was replaced.
 
+- **The subsumption sweep stops at its phase budget, and `binding_bound`
+  reports the clock that actually stopped the run** (#340). The sweep checked
+  only the run's `classify_timeout_ms` ceiling before building each pair's
+  tableau, so once its own phase deadline had passed every remaining pair
+  still built a tableau that returned `Unknown` from its first step. A class
+  whose satisfiability test ran out has no model to read and stood for a pair
+  against every satisfiable class, and all `k x n` of those pairs were
+  materialised. On the issue's 6,000-class ontology with a 200 ms phase
+  budget (release build), the subsumption phase took 5,042 ms over 27.45M
+  pairs. The sweep and the satisfiability phase now check the deadline they
+  hand their tableaux (the phase budget folded under the ceiling). After it
+  passes they build no further tableau, and those tableaux could only have
+  returned `Unknown`, so no verdict changes. A class with no model is
+  now a row with a count, not a list of pairs: its pairs are generated while
+  the budget lasts, and whatever is not reached is counted as undetermined in
+  bulk. Same ontology, same budget, three runs: 203 to 213 ms, 806 to 1,038
+  tableaux built, and 29.2M to 30.8M pairs reported in the new
+  `subsumption_agent.pairs_not_reached` and in `undetermined`, with no
+  subsumption reported and `complete: false`. At a 10,000 ms budget the number
+  of pairs decided is unchanged within run-to-run spread. `pairs_tested` now
+  counts tableaux actually built, and the new `pairs_scheduled` is tested
+  plus not reached. `budget.binding_bound` used to repeat what the settings
+  predicted. It now names the clock that stopped a cut-short phase
+  (`"global"`, `"phase"`, or `"none"`), and the prediction moves to the new
+  `budget.configured_bound`. The note says which phases each clock stopped,
+  and it no longer claims that the ceiling "cannot" fire, since that was
+  arithmetic about the tableaux and not about the run.
 - **`diff` and `drift` no longer hang on a symmetric blank-node graph** (#293).
   Both canonicalised blank nodes through oxrdf's RDFC-1.0, which sets no limit
   on `hash_n_degree_quads` calls, so the cost was factorial: a 7-node

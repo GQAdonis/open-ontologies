@@ -139,9 +139,10 @@ data_dir = "~/.open-ontologies"
 # classify_timeout_ms = 180000        # ceiling for the WHOLE run (ORE's 180s)
 # A run has five phases (consistency, satisfiability, subsumption, ABox,
 # explanation), each opening one phase budget, so at these defaults the ceiling
-# cannot be the bound that fires: 5 x 10000 = 50000, well under 180000. Lower it
-# below that to make it the binding one. Every `owl-dl` run reports which of the
-# two is binding, in `budget.binding_bound`, with a sentence saying why.
+# is not expected to be the bound that fires: 5 x 10000 = 50000, well under
+# 180000. Lower it below that to make it the expected one. Every `owl-dl` run
+# reports the bound that actually stopped it in `budget.binding_bound`, the one
+# these settings predict in `budget.configured_bound`, and a sentence saying why.
 # One-shot CLI commands read this section from <data-dir>/config.toml, and
 # `reason --phase-timeout-ms` / `--classify-timeout-ms` override it for one run
 # (CLI > config > default; no env var). A daemon reads it once, at start.

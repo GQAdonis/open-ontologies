@@ -56,7 +56,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Instant;
 
 use rayon::prelude::*;
@@ -3378,9 +3378,10 @@ impl DlReasoner {
     /// undetermined, just after eighteen times the work. Per phase fixes the
     /// defect that was reported (the ABox check inheriting a spent clock) and
     /// bounds the change at 3x the old worst case instead of 18x. The cost of
-    /// that choice is that the ceiling cannot be the bound that fires, and every
-    /// `owl-dl` run now says so in its `budget` block rather than leaving a
-    /// reader to infer it from two settings and a phase count.
+    /// that choice is that at the defaults the ceiling is not expected to be the
+    /// bound that fires, and every `owl-dl` run now says which bound did fire in
+    /// its `budget` block rather than leaving a reader to infer it from two
+    /// settings and a phase count.
     ///
     /// THAT 67s NUMBER CANNOT BE REPRODUCED FROM THIS REPOSITORY and is kept only
     /// as the reason a route was abandoned. The corpus it was taken over is not
@@ -3659,12 +3660,18 @@ impl DlReasoner {
         // and ~10,000 pairs; at the 10s per-test budget the worst case is over
         // a day. A global deadline is what actually stops that.
         //
-        // Checked here at the head of each task, which is the cheap place, AND
-        // folded into every tableau's own deadline below, which is the place
-        // that makes it a ceiling rather than a suggestion: without the fold, a
-        // single tableau that started inside the budget could run for a further
-        // phase-budget's worth of time past it.
-        let out_of_time = || global_deadline.is_some_and(|d| Instant::now() >= d);
+        // It is folded into each phase's own deadline by `phase_deadline_within`,
+        // and that folded deadline is checked at the head of each task, which is
+        // the cheap place, AND inside every tableau, which is the place that
+        // makes it a ceiling rather than a suggestion. The head-of-task check
+        // used to read the GLOBAL deadline alone (#340). A tableau opened after
+        // its phase deadline returns `Unknown` from its first step, so every
+        // task reached after the phase ran out still paid for building one, and
+        // with an undetermined class contributing a pair for every satisfiable
+        // class the sweep ran for 26 times its phase budget on nothing but
+        // those. Checking the folded deadline skips exactly the tableaux that
+        // could only have returned `Unknown`, so no verdict changes.
+        let expired = |d: Option<Instant>| d.is_some_and(|d| Instant::now() >= d);
 
         // ── Satisfiability Agent ─────────────────────────────────────
         let sat_start = Instant::now();
@@ -3678,8 +3685,9 @@ impl DlReasoner {
         let sat_full: Vec<(u32, Verdict, Option<ClassModel>)> = classes
             .par_iter()
             .map(|&cls| {
-                if out_of_time() {
-                    // Budget gone: report Unknown rather than guessing.
+                if expired(sat_deadline) {
+                    // Budget gone: report Unknown rather than guessing. This is
+                    // the verdict the tableau would return from its first step.
                     return (cls, Verdict::Unknown, None);
                 }
                 let (verdict, model) = self.satisfiable_with_model(cls, sat_deadline);
@@ -3718,6 +3726,11 @@ impl DlReasoner {
             .filter(|(_, v)| matches!(v, Verdict::Unknown))
             .map(|(c, _)| *c)
             .collect();
+        let sat_clock = if undetermined.is_empty() {
+            None
+        } else {
+            expired_clock(sat_deadline, global_deadline)
+        };
         let sat_time = sat_start.elapsed();
 
         // ── Subsumption Agent ────────────────────────────────────────
@@ -3731,8 +3744,16 @@ impl DlReasoner {
         // is a proven subsumer and is not tested either. Only a class with no
         // model (undetermined) falls back to testing every pair, which is what
         // every class used to do.
+        //
+        // That fallback is NOT written out pair by pair (#340). `k` classes with
+        // no model against `n` satisfiable ones is `k x n` pairs, 27 million on
+        // a 6,000-class ontology whose satisfiability phase ran out, and the old
+        // sweep materialised every one, then a verdict for every one. A row
+        // with no model now carries only its class and a count, and its
+        // candidates are generated while the phase budget lasts; whatever the
+        // budget does not reach is counted undetermined in bulk.
         let sat_set: HashSet<u32> = satisfiable.iter().copied().collect();
-        let mut pairs: Vec<(u32, u32)> = Vec::new();
+        let mut rows: Vec<PairRow<'_>> = Vec::new();
         let mut from_models: Vec<(u32, u32)> = Vec::new();
         for (sub, verdict, model) in &sat_full {
             if verdict.is_unsat() {
@@ -3741,6 +3762,7 @@ impl DlReasoner {
             let told_sup = |sup: u32| told.get(sub).is_some_and(|s| s.contains(&sup));
             match model {
                 Some(m) => {
+                    let mut listed = Vec::new();
                     for &sup in &m.root_classes {
                         if !sat_set.contains(&sup) || told_sup(sup) {
                             continue;
@@ -3748,16 +3770,15 @@ impl DlReasoner {
                         if m.deterministic {
                             from_models.push((*sub, sup));
                         } else {
-                            pairs.push((*sub, sup));
+                            listed.push(sup);
                         }
+                    }
+                    if !listed.is_empty() {
+                        rows.push(PairRow::listed(*sub, listed));
                     }
                 }
                 None => {
-                    for &sup in &satisfiable {
-                        if *sub != sup && !told_sup(sup) {
-                            pairs.push((*sub, sup));
-                        }
-                    }
+                    rows.push(PairRow::every(*sub, &satisfiable, &sat_set, told.get(sub)));
                 }
             }
         }
@@ -3765,25 +3786,38 @@ impl DlReasoner {
         // This phase's own budget, opened now rather than inherited from the
         // satisfiability sweep that just finished.
         let sub_deadline = self.phase_deadline_within(global_deadline);
-        let sweep = sweep_pairs(&pairs, |sub, sup| {
-            if out_of_time() {
-                return Verdict::Unknown;
-            }
-            self.decide_subsumption_within(&Concept::Atom(sub), &Concept::Atom(sup), sub_deadline)
-        });
+        let sweep = sweep_pairs(
+            &rows,
+            || expired(sub_deadline),
+            |sub, sup| {
+                self.decide_subsumption_within(
+                    &Concept::Atom(sub),
+                    &Concept::Atom(sup),
+                    sub_deadline,
+                )
+            },
+        );
+        let pairs_scheduled: usize = rows.iter().map(|r| r.count).sum();
         let subsumptions_from_models = from_models.len();
         let mut inferred = from_models;
         inferred.extend(sweep.inferred);
         let undetermined_pairs = sweep.undetermined;
-        let subsumption_cut_short = !undetermined_pairs.is_empty();
+        let pairs_not_reached = sweep.not_reached;
+        let pairs_tested = sweep.tested;
+        let subsumption_cut_short = !undetermined_pairs.is_empty() || pairs_not_reached > 0;
+        let sub_clock = if subsumption_cut_short {
+            expired_clock(sub_deadline, global_deadline)
+        } else {
+            None
+        };
         let sub_time = sub_start.elapsed();
 
         // Build hierarchy (told + inferred)
         let mut hierarchy: HashMap<u32, HashSet<u32>> = HashMap::new();
         for (&cls, supers) in &told {
-            if satisfiable.contains(&cls) {
+            if sat_set.contains(&cls) {
                 for &sup in supers {
-                    if satisfiable.contains(&sup) {
+                    if sat_set.contains(&sup) {
                         hierarchy.entry(cls).or_default().insert(sup);
                     }
                 }
@@ -3812,6 +3846,10 @@ impl DlReasoner {
             undetermined,
             subsumption_cut_short,
             undetermined_pairs,
+            pairs_not_reached,
+            pairs_scheduled,
+            satisfiability_clock: sat_clock,
+            subsumption_clock: sub_clock,
             subsumptions_from_models,
             equivalences,
             inferred_subsumptions: inferred.len(),
@@ -3822,7 +3860,7 @@ impl DlReasoner {
                     time_ms: sat_time.as_millis() as u64,
                 },
                 subsumption: AgentTaskMetrics {
-                    tasks: pairs.len(),
+                    tasks: pairs_tested,
                     results: inferred.len(),
                     time_ms: sub_time.as_millis() as u64,
                 },
@@ -4203,6 +4241,7 @@ impl DlReasoner {
                 individuals_checked: 0,
                 steps: 0,
                 stopped_by: None,
+                clock: None,
                 inferred_types: HashMap::new(),
             };
         }
@@ -4247,6 +4286,11 @@ impl DlReasoner {
             inferred_types: inferred,
             steps: tableau.budget.steps.load(Ordering::Relaxed),
             stopped_by: tableau.budget.stopped_by,
+            clock: if abox_undecided && tableau.budget.stopped_by == Some("time") {
+                expired_clock(tableau.budget.deadline, global)
+            } else {
+                None
+            },
         }
     }
 
@@ -4348,30 +4392,39 @@ impl DlReasoner {
         // called it "the budget that actually bounds the run". It had never
         // bounded one. Each phase opens its own deadline from
         // `tableaux_test_timeout_ms`, which defaults to 10 000 ms; five phases is
-        // a worst case of 50 000 ms, so the 180 000 ms ceiling is dead
-        // arithmetic and cannot fire. Handing the global budget the run instead
-        // means minting a deadline per TABLEAU, which was measured and took a
-        // 20-ontology corpus from 67s to over 600s, and was abandoned. That
-        // number is unreproducible from this tree; `phase_deadline` says why and
-        // names the bench that is.
+        // a worst case of 50 000 ms of tableau time, so at the defaults the
+        // 180 000 ms ceiling is not expected to fire. Handing the global budget
+        // the run instead means minting a deadline per TABLEAU, which was
+        // measured and took a 20-ontology corpus from 67s to over 600s, and was
+        // abandoned. That number is unreproducible from this tree;
+        // `phase_deadline` says why and names the bench that is.
         //
         // What is left is the thing that was missing: SAYING SO. A knob that
         // reads as a safety limit may not enforce nothing, and the arithmetic
         // that decides whether it can fire is two settings and a phase count,
         // which is not something a reader of the output can be expected to do.
         // The ceiling is now genuinely enforced over every phase — see
-        // `phase_deadline_within` — and this block says which of the two bounds
-        // is the one that actually stops the run, including when the answer is
-        // neither.
+        // `phase_deadline_within`.
+        //
+        // TWO answers, and they used to be one (#340). `configured_bound` is the
+        // bound the settings predict, from that arithmetic. `binding_bound` is
+        // the bound that ACTUALLY stopped this run, read off the phases that
+        // were cut short: `"global"` if the ceiling's deadline had passed when
+        // one of them ran out, `"phase"` if only a phase budget had, `"none"` if
+        // no wall clock stopped anything. The prediction is not an observation:
+        // it said "the ceiling cannot be the bound" over a run whose subsumption
+        // sweep had outlived its phase budget by 26 times and was heading for
+        // the ceiling, because the arithmetic assumed every phase ends at its
+        // own deadline and the sweep did not.
         let phase_names = ["consistency", "satisfiability", "subsumption", "abox", "explanation"];
         let global_ms = crate::runtime::classify_timeout_ms();
         let phase_ms = crate::runtime::tableaux_test_timeout_ms();
         let phase_worst_case_ms = phase_ms.map(|ms| ms * phase_names.len() as u64);
-        let (binding_bound, note) = match (global_ms, phase_worst_case_ms) {
+        let (configured_bound, configured_note) = match (global_ms, phase_worst_case_ms) {
             (None, None) => (
                 "none",
                 format!(
-                    "no wall-clock bound of any kind is in force: classify_timeout_ms and \
+                    "No wall-clock bound of any kind is in force: classify_timeout_ms and \
                      tableaux_test_timeout_ms are both 0. The only limits left are the node \
                      cap ({}) and the depth cap ({}), and neither bounds the number of \
                      BRANCHES a tableau explores.",
@@ -4382,9 +4435,9 @@ impl DlReasoner {
             (None, Some(worst)) => (
                 "phase",
                 format!(
-                    "no global bound is in force: classify_timeout_ms is 0. Each of the {} \
-                     phases opens its own {} ms budget, so the worst case for this run is \
-                     {worst} ms.",
+                    "No global bound is in force: classify_timeout_ms is 0. Each of the {} \
+                     phases opens its own {} ms budget, so the tableau work in this run is \
+                     bounded at {worst} ms.",
                     phase_names.len(),
                     phase_ms.unwrap_or(0)
                 ),
@@ -4401,8 +4454,8 @@ impl DlReasoner {
                 "global",
                 format!(
                     "classify_timeout_ms ({g} ms) is at or below the worst case the phase \
-                     budgets permit ({} phases x {} ms = {worst} ms), so it is the bound that \
-                     stops this run.",
+                     budgets permit ({} phases x {} ms = {worst} ms), so it is the bound \
+                     expected to stop a run that needs it.",
                     phase_names.len(),
                     phase_ms.unwrap_or(0)
                 ),
@@ -4410,16 +4463,77 @@ impl DlReasoner {
             (Some(g), Some(worst)) => (
                 "phase",
                 format!(
-                    "classify_timeout_ms ({g} ms) cannot be the bound that stops this run: \
-                     {} phases at {} ms each cap it at {worst} ms. It is enforced as a ceiling \
-                     over every phase and will not fire at this setting. The bound in force is \
-                     the phase budget; lower classify_timeout_ms below {worst} to make it the \
-                     binding one.",
+                    "At these settings classify_timeout_ms ({g} ms) is not expected to be the \
+                     bound: {} phases at {} ms each bound the tableau work at {worst} ms. It \
+                     is enforced as a ceiling over every phase and fires only if the work \
+                     between tableaux (building pair lists and the hierarchy) takes the rest; \
+                     lower it below {worst} ms to make it the expected bound.",
                     phase_names.len(),
                     phase_ms.unwrap_or(0)
                 ),
             ),
         };
+        let stopped_by_clock: Vec<(&str, &str)> = [
+            ("satisfiability", result.satisfiability_clock),
+            ("subsumption", result.subsumption_clock),
+            ("abox", abox_result.clock),
+        ]
+        .into_iter()
+        .filter_map(|(phase, clock)| clock.map(|c| (phase, c)))
+        .collect();
+        let phases_stopped_by = |clock: &str| -> Vec<&str> {
+            stopped_by_clock
+                .iter()
+                .filter(|(_, c)| *c == clock)
+                .map(|(p, _)| *p)
+                .collect()
+        };
+        let by_global = phases_stopped_by("global");
+        let by_phase = phases_stopped_by("phase");
+        let by_cap: Vec<&str> = budget_exhausted_in
+            .iter()
+            .copied()
+            .filter(|p| !stopped_by_clock.iter().any(|(q, _)| q == p))
+            .collect();
+        let binding_bound = if !by_global.is_empty() {
+            "global"
+        } else if !by_phase.is_empty() {
+            "phase"
+        } else {
+            "none"
+        };
+        let mut outcome = match binding_bound {
+            "global" => format!(
+                "The classify_timeout_ms ceiling ({} ms) stopped this run: it had passed \
+                 when {} ran out of time.",
+                global_ms.unwrap_or(0),
+                by_global.join(", ")
+            ),
+            "phase" => format!(
+                "A phase budget ({} ms) stopped this run, in {}; the classify_timeout_ms \
+                 ceiling did not.",
+                phase_ms.unwrap_or(0),
+                by_phase.join(", ")
+            ),
+            _ if by_cap.is_empty() => {
+                "No bound stopped this run: every phase finished inside its budget.".to_string()
+            }
+            _ => "No wall clock stopped this run.".to_string(),
+        };
+        if binding_bound == "global" && !by_phase.is_empty() {
+            outcome.push_str(&format!(
+                " {} had already run out of its own phase budget.",
+                by_phase.join(", ")
+            ));
+        }
+        if !by_cap.is_empty() {
+            outcome.push_str(&format!(
+                " {} {} cut short by the step, node or depth cap, not by a clock.",
+                by_cap.join(", "),
+                if by_cap.len() == 1 { "was" } else { "were" }
+            ));
+        }
+        let note = format!("{outcome} {configured_note}");
 
         let mut hierarchy_json: Vec<serde_json::Value> = Vec::new();
         for (&cls, supers) in &result.hierarchy {
@@ -4511,6 +4625,7 @@ impl DlReasoner {
                 "phases": phase_names,
                 "phase_worst_case_ms": phase_worst_case_ms,
                 "binding_bound": binding_bound,
+                "configured_bound": configured_bound,
                 "note": note,
             },
             "undetermined_classes": undetermined_names,
@@ -4530,8 +4645,10 @@ impl DlReasoner {
                 },
                 "subsumption_agent": {
                     "pairs_tested": result.agents.subsumption.tasks,
+                    "pairs_scheduled": result.pairs_scheduled,
+                    "pairs_not_reached": result.pairs_not_reached,
                     "subsumptions_found": result.agents.subsumption.results,
-                    "undetermined": result.undetermined_pairs.len(),
+                    "undetermined": result.undetermined_pair_count(),
                     "read_from_models": result.subsumptions_from_models,
                     "time_ms": result.agents.subsumption.time_ms,
                 },
@@ -4682,16 +4799,101 @@ struct ClassModel {
 }
 
 
+/// Which wall clock a phase deadline belongs to, if that deadline has passed.
+///
+/// `phase_deadline_within` hands every phase the earlier of its own budget and
+/// the run's ceiling, so a passed deadline is the ceiling exactly when it IS the
+/// ceiling's instant. Read at the end of a phase that was cut short, this is the
+/// bound that actually stopped it, which is what `budget.binding_bound` reports.
+/// It used to report the bound the settings predicted instead, and said
+/// `"phase"` over a run the ceiling had stopped (#340).
+fn expired_clock(deadline: Option<Instant>, global: Option<Instant>) -> Option<&'static str> {
+    let d = deadline?;
+    if Instant::now() < d {
+        return None;
+    }
+    Some(if global == Some(d) { "global" } else { "phase" })
+}
+
+/// The candidate superclasses of one class in the subsumption sweep.
+enum Candidates<'a> {
+    /// Read off a nondeterministic model of the class: every named class in
+    /// its root label that is not already settled.
+    Listed(Vec<u32>),
+    /// No model to read, so every class in `pool` except the class itself and
+    /// `exclude`. Never written out: see `PairRow::every`.
+    Every {
+        pool: &'a [u32],
+        exclude: Option<&'a HashSet<u32>>,
+    },
+}
+
+/// One class's share of the subsumption sweep, with its pair count known
+/// before any pair is generated, so pairs the budget never reaches can be
+/// counted without being built.
+struct PairRow<'a> {
+    sub: u32,
+    candidates: Candidates<'a>,
+    /// How many pairs `(sub, sup)` this row stands for.
+    count: usize,
+}
+
+impl<'a> PairRow<'a> {
+    fn listed(sub: u32, sups: Vec<u32>) -> Self {
+        let count = sups.len();
+        PairRow { sub, candidates: Candidates::Listed(sups), count }
+    }
+
+    /// Every class in `pool` other than `sub` and the members of `exclude`.
+    ///
+    /// `pool` must hold no duplicate and `pool_set` must be exactly its
+    /// members. The count is then `|pool|`, less one if `sub` is in it, less
+    /// the members of `exclude` other than `sub` that are in it, which costs
+    /// `|exclude|` rather than `|pool|`. That difference is the point: for
+    /// `k` classes with no model, counting by walking the pool is the `k x n`
+    /// walk this row exists to avoid.
+    fn every(
+        sub: u32,
+        pool: &'a [u32],
+        pool_set: &HashSet<u32>,
+        exclude: Option<&'a HashSet<u32>>,
+    ) -> Self {
+        let excluded = exclude.map_or(0, |e| {
+            e.iter().filter(|&&x| x != sub && pool_set.contains(&x)).count()
+        });
+        let count = pool.len() - usize::from(pool_set.contains(&sub)) - excluded;
+        PairRow { sub, candidates: Candidates::Every { pool, exclude }, count }
+    }
+}
+
 /// What a sweep of subsumption tests established, kept three-valued.
+#[derive(Default)]
 struct PairSweep {
     /// Pairs whose test proved `sub ⊓ ¬sup` unsatisfiable, so `sub ⊑ sup`.
     inferred: Vec<(u32, u32)>,
-    /// Pairs whose test came back `Unknown`. Neither a subsumption nor a
-    /// refutation of one.
+    /// Pairs whose test was run and came back `Unknown`. Neither a
+    /// subsumption nor a refutation of one.
     undetermined: Vec<(u32, u32)>,
+    /// Pairs whose test was run: one tableau each.
+    tested: usize,
+    /// Pairs never tested because the sweep's deadline had passed before they
+    /// were reached. Undetermined exactly as `undetermined` is, but counted
+    /// rather than listed, because there can be tens of millions of them.
+    not_reached: usize,
 }
 
-/// Run `decide` over every pair and keep the three answers apart.
+impl PairSweep {
+    fn merge(mut self, other: PairSweep) -> PairSweep {
+        self.inferred.extend(other.inferred);
+        self.undetermined.extend(other.undetermined);
+        self.tested += other.tested;
+        self.not_reached += other.not_reached;
+        self
+    }
+}
+
+/// Run `decide` over every pair the rows stand for, until `expired` says the
+/// sweep's deadline has passed, and keep the three answers apart.
 ///
 /// This used to be a `filter` that kept a pair when its verdict `.is_unsat()`,
 /// which folds `Unknown` into "not subsumed". The sweep only flagged itself
@@ -4707,28 +4909,77 @@ struct PairSweep {
 /// `budget_exhausted_in: []`, `complete: true`. A result that is wrong and says
 /// it is finished is the failure this codebase exists to rule out.
 ///
-/// Taking the verdict as a function is what lets a test hand the sweep an
-/// `Unknown` deterministically. The real failure needs a wall clock to run out
-/// partway through a sweep, and a test that depends on a wall clock is the
-/// flake `#161` removed.
-fn sweep_pairs<F>(pairs: &[(u32, u32)], decide: F) -> PairSweep
+/// And once the deadline has passed it STOPS (#340). It used to call `decide`
+/// on every remaining pair, and each call built a tableau that returned
+/// `Unknown` from its first step, so the sweep's wall time grew with the pair
+/// count rather than the budget: 5,042 ms under a 200 ms phase budget, over
+/// 27.5 million pairs, on the issue's 6,000-class ontology. Now a pair reached
+/// after `expired` first says yes is counted in `not_reached` without a call,
+/// and a row reached after that is counted in bulk from its `count` without
+/// generating its pairs. Since the skipped calls could only have returned
+/// `Unknown`, which is what they are counted as, no verdict changes.
+///
+/// Both outputs are sorted, so the result does not depend on how the thread
+/// pool happened to split the work.
+///
+/// Taking the verdict and the clock as functions is what lets a test hand the
+/// sweep an `Unknown` or an expiry deterministically. The real failure needs a
+/// wall clock to run out partway through a sweep, and a test that depends on a
+/// wall clock is the flake `#161` removed.
+fn sweep_pairs<E, F>(rows: &[PairRow<'_>], expired: E, decide: F) -> PairSweep
 where
+    E: Fn() -> bool + Sync,
     F: Fn(u32, u32) -> Verdict + Sync,
 {
-    let verdicts: Vec<((u32, u32), Verdict)> = pairs
-        .par_iter()
-        .map(|&(sub, sup)| ((sub, sup), decide(sub, sup)))
-        .collect();
-    let mut inferred = Vec::new();
-    let mut undetermined = Vec::new();
-    for (pair, verdict) in verdicts {
-        match verdict {
-            Verdict::Unsatisfiable => inferred.push(pair),
-            Verdict::Unknown => undetermined.push(pair),
+    // A latch, so that once one worker has seen the deadline pass no worker
+    // reads the clock again.
+    let stopped = AtomicBool::new(false);
+    let stop = || {
+        if stopped.load(Ordering::Relaxed) {
+            return true;
+        }
+        if expired() {
+            stopped.store(true, Ordering::Relaxed);
+            return true;
+        }
+        false
+    };
+    let test = |mut acc: PairSweep, sub: u32, sup: u32| {
+        if stop() {
+            acc.not_reached += 1;
+            return acc;
+        }
+        acc.tested += 1;
+        match decide(sub, sup) {
+            Verdict::Unsatisfiable => acc.inferred.push((sub, sup)),
+            Verdict::Unknown => acc.undetermined.push((sub, sup)),
             Verdict::Satisfiable => {}
         }
-    }
-    PairSweep { inferred, undetermined }
+        acc
+    };
+    let mut sweep = rows
+        .par_iter()
+        .map(|row| {
+            if stop() {
+                return PairSweep { not_reached: row.count, ..PairSweep::default() };
+            }
+            let sub = row.sub;
+            match &row.candidates {
+                Candidates::Listed(sups) => sups
+                    .par_iter()
+                    .fold(PairSweep::default, |acc, &sup| test(acc, sub, sup))
+                    .reduce(PairSweep::default, PairSweep::merge),
+                Candidates::Every { pool, exclude } => pool
+                    .par_iter()
+                    .filter(|&&sup| sup != sub && !exclude.is_some_and(|e| e.contains(&sup)))
+                    .fold(PairSweep::default, |acc, &sup| test(acc, sub, sup))
+                    .reduce(PairSweep::default, PairSweep::merge),
+            }
+        })
+        .reduce(PairSweep::default, PairSweep::merge);
+    sweep.inferred.sort_unstable();
+    sweep.undetermined.sort_unstable();
+    sweep
 }
 
 // ── Agent Result Types ──────────────────────────────────────────────────
@@ -4745,16 +4996,36 @@ pub struct AgentClassificationResult {
     /// may be missing pairs. Absence of a subsumption in the output is then
     /// not evidence that it does not hold.
     pub subsumption_cut_short: bool,
-    /// The ordered pairs `(sub, sup)` whose test came back `Unknown`, whether
-    /// the run's ceiling stopped the sweep before reaching them or the phase
-    /// budget expired inside the test. See `sweep_pairs`.
+    /// The ordered pairs `(sub, sup)` whose test was run and came back
+    /// `Unknown`, because a budget expired inside the test. See `sweep_pairs`.
     pub undetermined_pairs: Vec<(u32, u32)>,
+    /// Pairs never tested because the sweep's deadline (its phase budget, or
+    /// the run's ceiling if that came first) had passed before they were
+    /// reached. Every one is undetermined; they are counted, not listed. See
+    /// `undetermined_pair_count`.
+    pub pairs_not_reached: usize,
+    /// Every pair the sweep had to decide: tested plus not reached. Pairs
+    /// settled by a model or by a told axiom are not in it.
+    pub pairs_scheduled: usize,
+    /// The wall clock that cut the satisfiability phase short, if one did:
+    /// `"phase"` or `"global"`. `None` when the phase finished, or was cut
+    /// short only by a step, node or depth cap.
+    pub satisfiability_clock: Option<&'static str>,
+    /// The same, for the subsumption sweep.
+    pub subsumption_clock: Option<&'static str>,
     /// Subsumptions read off a satisfiability model built with no choice, so
     /// never tested pairwise. See `ClassModel`.
     pub subsumptions_from_models: usize,
     pub equivalences: Vec<(u32, u32)>,
     pub inferred_subsumptions: usize,
     pub agents: AgentMetrics,
+}
+
+impl AgentClassificationResult {
+    /// Every pair left undecided: tested and `Unknown`, plus never reached.
+    pub fn undetermined_pair_count(&self) -> usize {
+        self.undetermined_pairs.len() + self.pairs_not_reached
+    }
 }
 
 pub struct AgentMetrics {
@@ -4790,6 +5061,9 @@ pub struct ABoxResult {
     /// Those call for different responses, and a reader deciding whether to
     /// raise a limit needs to know which limit.
     pub stopped_by: Option<&'static str>,
+    /// When `stopped_by` is `"time"`, which wall clock that was: `"phase"` or
+    /// `"global"`. See `expired_clock`.
+    pub clock: Option<&'static str>,
 }
 
 pub struct ClassificationResult {
@@ -6224,6 +6498,16 @@ mod certificate_boundary_tests {
 #[cfg(test)]
 mod pair_sweep_tests {
     use super::*;
+    use std::sync::atomic::AtomicUsize;
+
+    fn never() -> bool {
+        false
+    }
+
+    /// The pairs listed rows stand for, in the order given.
+    fn rows_of(pairs: &[(u32, u32)]) -> Vec<PairRow<'static>> {
+        pairs.iter().map(|&(sub, sup)| PairRow::listed(sub, vec![sup])).collect()
+    }
 
     /// An undecided subsumption test is reported as undecided, not dropped.
     ///
@@ -6232,8 +6516,8 @@ mod pair_sweep_tests {
     /// refuted one did and the sweep could not say it had been cut short.
     #[test]
     fn an_unknown_pair_is_kept_apart_from_a_refuted_one() {
-        let pairs = [(1, 2), (1, 3), (2, 3), (3, 1)];
-        let sweep = sweep_pairs(&pairs, |sub, sup| match (sub, sup) {
+        let rows = rows_of(&[(1, 2), (1, 3), (2, 3), (3, 1)]);
+        let sweep = sweep_pairs(&rows, never, |sub, sup| match (sub, sup) {
             (1, 2) => Verdict::Unsatisfiable,
             (1, 3) => Verdict::Unknown,
             (3, 1) => Verdict::Unknown,
@@ -6241,16 +6525,116 @@ mod pair_sweep_tests {
         });
         assert_eq!(sweep.inferred, vec![(1, 2)]);
         assert_eq!(sweep.undetermined, vec![(1, 3), (3, 1)]);
+        assert_eq!((sweep.tested, sweep.not_reached), (4, 0));
     }
 
     /// A sweep in which every test was decided has nothing to report.
     #[test]
     fn a_fully_decided_sweep_reports_no_undetermined_pair() {
-        let pairs = [(1, 2), (2, 1)];
-        let sweep = sweep_pairs(&pairs, |sub, _| {
+        let rows = rows_of(&[(1, 2), (2, 1)]);
+        let sweep = sweep_pairs(&rows, never, |sub, _| {
             if sub == 1 { Verdict::Unsatisfiable } else { Verdict::Satisfiable }
         });
         assert_eq!(sweep.inferred, vec![(1, 2)]);
         assert!(sweep.undetermined.is_empty());
+        assert_eq!(sweep.not_reached, 0);
+    }
+
+    /// A row with no model stands for every other class in the pool that is
+    /// not excluded, and its count says so without walking the pool.
+    #[test]
+    fn a_row_with_no_model_counts_exactly_the_pairs_it_would_generate() {
+        let pool: Vec<u32> = (0..50).collect();
+        let pool_set: HashSet<u32> = pool.iter().copied().collect();
+        // 7 is the class itself, 99 is outside the pool, 3 and 7 are in it.
+        let exclude: HashSet<u32> = [3, 7, 99].into_iter().collect();
+        let row = PairRow::every(7, &pool, &pool_set, Some(&exclude));
+        assert_eq!(row.count, 48, "50 classes, less 7 itself, less 3");
+        let sweep = sweep_pairs(&[row], never, |_, _| Verdict::Satisfiable);
+        assert_eq!(sweep.tested, 48);
+        assert_eq!(sweep.not_reached, 0);
+        let row = PairRow::every(7, &pool, &pool_set, None);
+        assert_eq!(row.count, 49);
+    }
+
+    /// #340: once the deadline has passed, the sweep stops building tableaux.
+    ///
+    /// The old sweep called `decide` on every pair, and after the phase
+    /// deadline each call built a tableau that returned `Unknown` from its
+    /// first step: 27.5 million of them under a 200 ms budget. Here the clock
+    /// expires after `BUDGET` calls. A call already in flight on another
+    /// worker when it expires may still complete, so the bound is `BUDGET`
+    /// plus one per worker, and everything else must be counted, not tested.
+    #[test]
+    fn a_sweep_whose_deadline_passes_stops_deciding_and_counts_the_rest() {
+        const BUDGET: usize = 100;
+        let pool: Vec<u32> = (0..2_000).collect();
+        let pool_set: HashSet<u32> = pool.iter().copied().collect();
+        let mut rows: Vec<PairRow<'_>> = (0..2_000)
+            .map(|sub| PairRow::every(sub, &pool, &pool_set, None))
+            .collect();
+        rows.push(PairRow::listed(5, vec![6, 7, 8]));
+        let total: usize = rows.iter().map(|r| r.count).sum();
+        assert_eq!(total, 2_000 * 1_999 + 3);
+
+        let calls = AtomicUsize::new(0);
+        let sweep = sweep_pairs(
+            &rows,
+            || calls.load(Ordering::SeqCst) >= BUDGET,
+            |sub, sup| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                // Never a proof: nothing below may be reported as inferred
+                // unless a decided call said so.
+                if sub == 0 && sup == 1 { Verdict::Unsatisfiable } else { Verdict::Satisfiable }
+            },
+        );
+        let made = calls.load(Ordering::SeqCst);
+        let workers = rayon::current_num_threads();
+        assert!(
+            made <= BUDGET + workers,
+            "{made} tableaux built after a deadline that passed at {BUDGET}; the sweep \
+             kept deciding pairs it could only have answered Unknown"
+        );
+        assert_eq!(sweep.tested, made, "every call is counted as tested");
+        assert_eq!(
+            sweep.tested + sweep.not_reached,
+            total,
+            "every pair is either tested or counted as not reached"
+        );
+        assert!(sweep.not_reached >= total - BUDGET - workers);
+        assert!(sweep.undetermined.is_empty(), "no tested pair came back Unknown");
+        assert!(
+            sweep.inferred.iter().all(|&p| p == (0, 1)),
+            "only a decided Unsatisfiable may be inferred: {:?}",
+            sweep.inferred
+        );
+    }
+
+    /// A deadline already gone when the sweep starts: no tableau at all, and
+    /// every pair counted from the rows' counts.
+    #[test]
+    fn a_sweep_that_starts_after_its_deadline_builds_nothing() {
+        let pool: Vec<u32> = (0..300).collect();
+        let pool_set: HashSet<u32> = pool.iter().copied().collect();
+        let rows: Vec<PairRow<'_>> =
+            (0..300).map(|sub| PairRow::every(sub, &pool, &pool_set, None)).collect();
+        let sweep = sweep_pairs(&rows, || true, |_, _| {
+            panic!("a tableau was built after the deadline had passed")
+        });
+        assert_eq!(sweep.tested, 0);
+        assert_eq!(sweep.not_reached, 300 * 299);
+        assert!(sweep.inferred.is_empty() && sweep.undetermined.is_empty());
+    }
+
+    /// The clock a phase deadline belongs to is read off the instant itself.
+    #[test]
+    fn an_expired_deadline_names_its_clock() {
+        let past = Instant::now() - std::time::Duration::from_millis(5);
+        let later = Instant::now() + std::time::Duration::from_secs(3600);
+        assert_eq!(expired_clock(Some(past), Some(past)), Some("global"));
+        assert_eq!(expired_clock(Some(past), Some(later)), Some("phase"));
+        assert_eq!(expired_clock(Some(past), None), Some("phase"));
+        assert_eq!(expired_clock(Some(later), Some(later)), None);
+        assert_eq!(expired_clock(None, Some(past)), None);
     }
 }
