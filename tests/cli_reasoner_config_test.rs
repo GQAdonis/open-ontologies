@@ -87,7 +87,10 @@ fn reason_reports_the_budgets_set_in_config_toml() {
     assert_eq!(b["classify_timeout_ms"], 60000, "config ceiling ignored: {b}");
     // 5 phases x 200 ms = 1000 ms, under the 60 000 ms ceiling.
     assert_eq!(b["phase_worst_case_ms"], 1000, "{b}");
-    assert_eq!(b["binding_bound"], "phase", "{b}");
+    // The settings predict the phase budget binds; this tiny run hits neither
+    // clock, and `binding_bound` reports what actually stopped it (#340).
+    assert_eq!(b["configured_bound"], "phase", "{b}");
+    assert_eq!(b["binding_bound"], "none", "{b}");
 }
 
 #[test]
@@ -100,8 +103,8 @@ fn reason_flags_override_config_toml() {
     );
     assert_eq!(b["phase_timeout_ms"], 300, "flag must beat config: {b}");
     assert_eq!(b["classify_timeout_ms"], 700, "flag must beat config: {b}");
-    // 5 x 300 = 1500 > 700, so the ceiling is now the bound that fires.
-    assert_eq!(b["binding_bound"], "global", "{b}");
+    // 5 x 300 = 1500 > 700, so the ceiling is now the bound expected to fire.
+    assert_eq!(b["configured_bound"], "global", "{b}");
 
     // One flag alone leaves the other at its configured value, not the default.
     let b = budget(d.path(), &["--phase-timeout-ms", "400"]);
