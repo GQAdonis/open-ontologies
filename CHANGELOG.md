@@ -150,6 +150,26 @@ All notable changes to Open Ontologies are documented here.
   and it no longer claims that the ceiling "cannot" fire, since that was
   arithmetic about the tableaux and not about the run.
 
+- **A datatype the store cannot tell apart is refused inside `sh:or`,
+  `sh:not` and `sh:qualifiedValueShape`, as it already was on its own.** The
+  store widens xsd:int, xsd:nonNegativeInteger and the other integer-derived
+  types (and xsd:dateTimeStamp) to the type they derive from, and the direct
+  `sh:datatype` constraint refuses to decide them. A member naming one did
+  not: `sh:or` and a qualified minimum reported every conforming value, and
+  `sh:not [ sh:datatype xsd:nonNegativeInteger ]` returned `conforms: true`
+  over values of exactly that type. Each now records the constraint in
+  `skipped_constraints` with the direct path's reason and suppresses the
+  verdict. W3C columns unchanged (61, 53).
+- **`sh:node` to a shape whose own `sh:datatype` the store cannot tell apart
+  is refused rather than answered.** The shape compiler refused such a
+  datatype on a property inside the referenced shape and not on the shape
+  itself, so every value the store had widened was reported. The `sh:node` is
+  now recorded as not evaluated. W3C columns unchanged.
+- **A node-level `sh:or` result carries the node shape's `sh:severity`.** It
+  was written `"Violation"` whatever the shape declared, and the RDF report
+  followed it with `sh:resultSeverity sh:Violation`; it now uses the declared
+  term, through the same `severity_name` as every other path (#334). W3C
+  columns unchanged.
 - **A custom `sh:severity` keeps its namespace in the JSON report** (#334).
   Every path set `severity` to the text after the last `#` of the declared
   IRI, and every reader takes a bare name as `sh:`, so W3C
