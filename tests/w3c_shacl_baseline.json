@@ -134,8 +134,8 @@
   "full_tuple": {
     "counts": {
       "total": 120,
-      "pass": 51,
-      "fail": 25,
+      "pass": 53,
+      "fail": 23,
       "undetermined": 44,
       "error": 0
     },
@@ -146,7 +146,7 @@
       "core/misc/deactivated-002": "PASS",
       "core/misc/message-001": "PASS",
       "core/misc/severity-001": "PASS",
-      "core/misc/severity-002": "FAIL",
+      "core/misc/severity-002": "PASS",
       "core/node/and-001": "UNDETERMINED",
       "core/node/and-002": "UNDETERMINED",
       "core/node/class-001": "PASS",
@@ -221,7 +221,7 @@
       "core/property/nodeKind-001": "PASS",
       "core/property/not-001": "PASS",
       "core/property/or-001": "PASS",
-      "core/property/or-datatypes-001": "FAIL",
+      "core/property/or-datatypes-001": "PASS",
       "core/property/pattern-001": "PASS",
       "core/property/pattern-002": "UNDETERMINED",
       "core/property/property-001": "FAIL",

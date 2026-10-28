@@ -361,6 +361,23 @@ impl GraphStore {
         path: &str,
         content: &str,
     ) -> anyhow::Result<ParsedDocument> {
+        Self::parse_document_with_base_and_prefixes(path, content, Self::file_base_iri(path))
+    }
+
+    /// [`Self::parse_document`] with an explicit base IRI for relative IRIs.
+    fn parse_document_with_base(
+        path: &str,
+        content: &str,
+        base: Option<String>,
+    ) -> anyhow::Result<Vec<Quad>> {
+        Ok(Self::parse_document_with_base_and_prefixes(path, content, base)?.0)
+    }
+
+    fn parse_document_with_base_and_prefixes(
+        path: &str,
+        content: &str,
+        base: Option<String>,
+    ) -> anyhow::Result<ParsedDocument> {
         match Self::detect_source_format(path, content) {
             SourceFormat::OwlFunctional => Ok((
                 crate::ofn::parse(content)?
@@ -376,7 +393,7 @@ impl GraphStore {
                 // would not load a single triple before this. OFN needs none:
                 // its grammar admits only absolute IRIs.
                 let mut parser = RdfParser::from_format(format);
-                if let Some(base) = Self::file_base_iri(path) {
+                if let Some(base) = base {
                     parser = parser.with_base_iri(base)?;
                 }
                 let mut reader = parser.for_reader(Cursor::new(content.as_bytes()));
@@ -436,11 +453,27 @@ impl GraphStore {
         Self::content_as_turtle(path, content)
     }
 
+    /// As `read_as_turtle`, but relative IRIs resolve against `base_path`
+    /// rather than `path`. A diff reads both sides against the old file, so
+    /// `<#Dog>` names the same IRI in both versions instead of two.
+    pub fn read_as_turtle_against(path: &str, base_path: &str) -> anyhow::Result<String> {
+        let content = std::fs::read_to_string(path)?;
+        Self::convert_to_turtle(path, content, Self::file_base_iri(base_path))
+    }
+
     /// As `read_as_turtle`, for content already in hand (stdin, for instance).
     pub fn content_as_turtle(path_hint: &str, content: String) -> anyhow::Result<String> {
+        Self::convert_to_turtle(path_hint, content, Self::file_base_iri(path_hint))
+    }
+
+    fn convert_to_turtle(
+        path_hint: &str,
+        content: String,
+        base: Option<String>,
+    ) -> anyhow::Result<String> {
         let format = Self::detect_source_format(path_hint, &content);
         if format == SourceFormat::Rdf(RdfFormat::Turtle) {
-            if let Some(base) = Self::file_base_iri(path_hint) {
+            if let Some(base) = base {
                 // Keep the default base on the first source line so downstream
                 // parsers report the document's original line numbers. A later
                 // @base still overrides it; only first-line columns gain the prefix.
@@ -451,7 +484,7 @@ impl GraphStore {
         let store = Self::new();
         {
             let inner = &store.store;
-            let quads = Self::parse_document(path_hint, &content)?;
+            let quads = Self::parse_document_with_base(path_hint, &content, base)?;
             for quad in &quads {
                 inner.insert(quad)?;
             }

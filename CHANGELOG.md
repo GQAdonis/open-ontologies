@@ -6,6 +6,38 @@ All notable changes to Open Ontologies are documented here.
 
 ### Added
 
+- **A plan says whether the change breaks the ontology, and scores it `high`
+  when it does** (#336, reported by @jpsanchezcalypso). `risk_score` came from
+  removal counts alone, so a change that made a named class unsatisfiable (R1:
+  `Manager ⊑ Person ⊑ Agent`, `Manager ⊥ Agent`) or the ABox inconsistent (R2:
+  `Machine ⊥ Person`, `alice a Machine` where `alice a Person`) removed nothing
+  and scored `low`. `plan`, `batch` `plan` and `onto_plan` now carry a `logic`
+  block through one function (`Planner::plan_with`): `new_defects`, the
+  `defects` findings the store did not have, and `abox_consistent`, the owl-dl
+  tableaux on the proposed graph under the `[reasoner]` budget, with
+  `abox_consistent_before` for the store when the proposed graph is
+  inconsistent. A new error- or warning-severity defect, or an inconsistency
+  the store was not proven to have, sets `risk_score` to `high`, and the new
+  `risk_reasons` says why. A check that ran out of budget, or a graph using a
+  construct the tableaux does not model, reports `abox_consistent: null` with
+  the reason, never `true`. On by default; `--no-logic-check` (CLI, `batch`) or
+  `check_logic: false` (`onto_plan`) skips it and the block says
+  `not_checked`. `apply` is unchanged and does not gate on the verdict, and the
+  exit code of `plan` is unchanged (1 on an error only), as it already was for
+  a `high` score from removals; `docs/lifecycle.md` says so. R1 and R2 now plan
+  `high` on all four entry points; the benign control stays `low`.
+- **`defects` says how many classes are affected, and its 50-a-kind listing
+  can be lifted** (#341). `defect_count` counts findings, one per query row,
+  and for `inherited_disjoint` a row is a (class, disjoint pair), so a class
+  under two disjoint pairs counted twice and the headline ran higher than the
+  reasoner's list of unsatisfiable classes with nothing saying why. The report
+  now carries `affected_classes` and `affected_properties` (distinct subjects)
+  beside it, and `kind_counts` gives `findings` and the affected count for each
+  of the eight kinds. `defects --limit N` on the CLI and `limit` on
+  `onto_defects` set the per-kind listing bound (default 50, `0` lists every
+  row), and `truncated` names a kind only when the bound in force cut it. On
+  the issue's reproduction: `defect_count` 2, `affected_classes` 1; with 80
+  classes under one disjoint pair, `--limit 0` lists all 80.
 - **`onto_convert`, the CLI `convert` and `batch` `convert` write OWL 2
   functional syntax (`--to ofn`)** (requested by @noahgift in #322). #311 gave
   the engine an OFN reader and no writer, so handing an ontology to the OWL
@@ -44,8 +76,134 @@ All notable changes to Open Ontologies are documented here.
   `tests/shacl_validation_report_w3c_test.rs` with their causes, which include
   an `sh:or` false negative on IRI and ill-typed values.
 
+- **`reason --phase-timeout-ms` and `--classify-timeout-ms`** (#339). They set
+  the two `owl-dl` wall clocks for one run, in milliseconds, with `0` meaning
+  no limit, as in `config.toml`. The precedence is the flag, then `[reasoner]`
+  in `<data-dir>/config.toml`, then the default (10 000 and 180 000). No
+  environment variable sets either clock. The `budget` block reports the
+  values in force. A daemon fixes its clocks when it starts, and it serves
+  every client from one process. For that reason a `reason` that carries
+  either flag is never proxied. While a daemon is up, the command exits 1 and
+  names `--no-connect`, because a local run would read a different store from
+  the graph the daemon holds. In memory mode, that local store is empty.
+
 ### Fixed
 
+- **MCP `onto_lint` and `onto_diff`, and CLI `diff`, read RDF/XML and
+  relative-IRI Turtle** (#317, @vishalhabib99). They passed the raw file to
+  the Turtle parser, so an RDF/XML `.owl` file failed with "Invalid IRI code
+  point" and `<#Dog> a owl:Class .` failed with "No scheme found in an
+  absolute IRI", while CLI `lint`, `onto_load` and `onto_validate` accepted
+  the same files. They now read through `GraphStore::read_as_turtle`, as CLI
+  `lint` does. A diff resolves both files against the old file's location, so
+  `<#Dog>` is one IRI in both versions and adding a class reports `added: 1,
+  removed: 0`, not every triple. A file CLI `diff` cannot read is reported as
+  JSON naming it (`Cannot read <path>: …`), as `onto_diff` does.
+
+- **One-shot CLI commands honour `[reasoner]` and the rest of
+  `<data-dir>/config.toml`** (#339). `setup()` loaded the file and kept only
+  `[storage]`. `runtime::init_from_config` ran only in `serve`, `serve-http`
+  and `serve-unix`. So `reason --profile owl-dl` always ran with a 10 000 ms
+  phase budget and a 180 000 ms ceiling, whatever the file said. Its `budget`
+  block then reported those defaults as the configuration. `setup()` now calls
+  `init_from_config` with the config it already loads. That function only
+  stores atomics, and it overwrites them, so it loads no model and can safely
+  run again. The same change applies `[cache]`, `[feedback]`, `[repo]`,
+  `[imports]`, `[webhook]` and `[language]` to one-shot commands and `batch`.
+  The servers already applied them. MEASURED with
+  `tests/cli_reasoner_config_test.rs`: on main 9e73d951, a config of
+  `tableaux_test_timeout_ms = 200` reported `phase_timeout_ms: 10000`. It now
+  reports 200. A proxied run is unchanged, because `daemon start` passes
+  `<data-dir>/config.toml` to `serve-http`. Measured on this branch, a
+  proxied run reported 200 and 60 000 from the file. One committed artifact
+  showed the bug: `docs/assets/hqdm/owl-dl.json` named
+  `tableaux_test_timeout_ms = 120000` in its `source` while its `budget` block
+  reported 10000 and 180000. Rerun with the fix, the same command reports
+  120000 and 900000 and every verdict field is unchanged (39 unsatisfiable,
+  none undetermined), so only the `budget` block was replaced.
+
+- **The subsumption sweep stops at its phase budget, and `binding_bound`
+  reports the clock that actually stopped the run** (#340). The sweep checked
+  only the run's `classify_timeout_ms` ceiling before building each pair's
+  tableau, so once its own phase deadline had passed every remaining pair
+  still built a tableau that returned `Unknown` from its first step. A class
+  whose satisfiability test ran out has no model to read and stood for a pair
+  against every satisfiable class, and all `k x n` of those pairs were
+  materialised. On the issue's 6,000-class ontology with a 200 ms phase
+  budget (release build), the subsumption phase took 5,042 ms over 27.45M
+  pairs. The sweep and the satisfiability phase now check the deadline they
+  hand their tableaux (the phase budget folded under the ceiling). After it
+  passes they build no further tableau, and those tableaux could only have
+  returned `Unknown`, so no verdict changes. A class with no model is
+  now a row with a count, not a list of pairs: its pairs are generated while
+  the budget lasts, and whatever is not reached is counted as undetermined in
+  bulk. Same ontology, same budget, three runs: 203 to 213 ms, 806 to 1,038
+  tableaux built, and 29.2M to 30.8M pairs reported in the new
+  `subsumption_agent.pairs_not_reached` and in `undetermined`, with no
+  subsumption reported and `complete: false`. At a 10,000 ms budget the number
+  of pairs decided is unchanged within run-to-run spread. `pairs_tested` now
+  counts tableaux actually built, and the new `pairs_scheduled` is tested
+  plus not reached. `budget.binding_bound` used to repeat what the settings
+  predicted. It now names the clock that stopped a cut-short phase
+  (`"global"`, `"phase"`, or `"none"`), and the prediction moves to the new
+  `budget.configured_bound`. The note says which phases each clock stopped,
+  and it no longer claims that the ceiling "cannot" fire, since that was
+  arithmetic about the tableaux and not about the run.
+
+- **A datatype the store cannot tell apart is refused inside `sh:or`,
+  `sh:not` and `sh:qualifiedValueShape`, as it already was on its own.** The
+  store widens xsd:int, xsd:nonNegativeInteger and the other integer-derived
+  types (and xsd:dateTimeStamp) to the type they derive from, and the direct
+  `sh:datatype` constraint refuses to decide them. A member naming one did
+  not: `sh:or` and a qualified minimum reported every conforming value, and
+  `sh:not [ sh:datatype xsd:nonNegativeInteger ]` returned `conforms: true`
+  over values of exactly that type. Each now records the constraint in
+  `skipped_constraints` with the direct path's reason and suppresses the
+  verdict. W3C columns unchanged (61, 53).
+- **`sh:node` to a shape whose own `sh:datatype` the store cannot tell apart
+  is refused rather than answered.** The shape compiler refused such a
+  datatype on a property inside the referenced shape and not on the shape
+  itself, so every value the store had widened was reported. The `sh:node` is
+  now recorded as not evaluated. W3C columns unchanged.
+- **A node-level `sh:or` result carries the node shape's `sh:severity`.** It
+  was written `"Violation"` whatever the shape declared, and the RDF report
+  followed it with `sh:resultSeverity sh:Violation`; it now uses the declared
+  term, through the same `severity_name` as every other path (#334). W3C
+  columns unchanged.
+- **A custom `sh:severity` keeps its namespace in the JSON report** (#334).
+  Every path set `severity` to the text after the last `#` of the declared
+  IRI, and every reader takes a bare name as `sh:`, so W3C
+  `core/misc/severity-002`'s `ex:MySeverity` read back as `sh:MySeverity`
+  (one in a slash namespace survived whole only because it has no `#`).
+  `sh:Violation`, `sh:Warning` and `sh:Info` are still `"Violation"`,
+  `"Warning"` and `"Info"`; any IRI outside the SHACL namespace is now written
+  whole, on node-shape, property-shape, qualified and `sh:sparql` results. The
+  RDF report already wrote the declared term. W3C full-tuple column 52 to 53
+  PASS; gated column unchanged at 61.
+- **A value that is not a well-typed literal of D no longer satisfies a
+  `sh:datatype D` test anywhere in the SHACL engine** (#333). The test was
+  spliced as `DATATYPE(?v) = <D>`, a SPARQL type error for an IRI or blank
+  node, and FILTER drops a row whose test errors: an IRI value under `sh:or`
+  over datatypes matched no alternative and was never reported, and an IRI
+  passed a property shape's `sh:datatype` and a datatype nested under
+  `sh:node` or a node-level `sh:or`. Separately, the `sh:or`, `sh:not`,
+  `sh:qualifiedValueShape` and `sh:node` member tests lacked the lexical check
+  the direct constraints had, so `"none"^^xsd:boolean` counted as an
+  xsd:boolean. One helper, `datatype_conforms`, is now spliced at all eight
+  sites and cannot error. W3C `core/property/or-datatypes-001` reports 3 of 3
+  violations where it reported 1: full-tuple column 51 to 52 PASS, report
+  match 48 to 49 of 56, gated column unchanged at 61.
+
+- **`batch` runs `defects`** (#336). It had no arm, so `batch` answered
+  `{"error":"unknown batch command: 'defects'"}`, and so did the CLI `defects`
+  whenever a daemon was up, since the CLI proxies it there. `defects [path]
+  [--limit N]` checks the file alone, or the batch's own store when no path is
+  given. The proxy coverage test now lists `defects`. The local CLI `defects`
+  checked its file inside the main store, so under persistent storage it
+  judged the file together with whatever the store held and left the file's
+  triples behind in it; it now uses a store of its own, as the proxied form
+  does. No other MCP-only check (`onto_dlp_boundary`, `onto_dl_check`) is a CLI
+  command, so none is proxied and none was given a batch arm.
 - **`diff` and `drift` no longer hang on a symmetric blank-node graph** (#293).
   Both canonicalised blank nodes through oxrdf's RDFC-1.0, which sets no limit
   on `hash_n_degree_quads` calls, so the cost was factorial: a 7-node

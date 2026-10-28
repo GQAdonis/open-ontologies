@@ -56,6 +56,15 @@ under `constructs_not_modelled`. The file keeps the fields the figure reads and
 drops the inferred subsumptions. `the_reasoner_still_gives_the_committed_verdicts`
 in the test recomputes this run in-process and requires the same two sets.
 
+The `budget` block was replaced on 2026-10-28 (#339). Until then a one-shot
+`batch` ignored `[reasoner]` in `config.toml`, so the committed block reported
+the default 10000 ms phase and 180000 ms ceiling, not the budgets above. The
+same command rerun with the fix reports 120000 and 900000, and every verdict
+field (`unsatisfiable_classes`, `undetermined_classes`, `consistent`,
+`complete`, `search_finished`, `named_classes`, `budget_exhausted_in`,
+`constructs_not_modelled`) is identical, which is expected: the run never came
+near either budget.
+
 Regenerated on 2026-10-13. The run committed before that checked 234 classes,
 found 195 satisfiable, refuted none and left these 39 undetermined on the
 tableaux's expansion cap. Two changes account for the difference. Five of the
