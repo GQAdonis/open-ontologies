@@ -2502,7 +2502,7 @@ impl OpenOntologiesServer {
 
     // ── v2: Lifecycle tools ─────────────────────────────────────────────────
 
-    #[tool(name = "onto_plan", description = "Terraform-style plan: diff current store against proposed Turtle. Shows added/removed classes/properties, blast radius, risk score, and locked IRI violations. All of that is about SHAPE. Pass check_conservativity=true for the one part that is about MEANING: whether the change alters any consequence over the names the store already uses, under the rule table in conservativity_profile. That is the check a shape diff cannot do — adding one rdfs:domain reclassifies every existing individual of that property while adding no class and removing nothing, so every other number in the plan stays green. It reasons both graphs to a fixpoint, so it is opt-in; when it is off the plan says so under `conservativity` rather than staying silent. Read the honesty note in onto_conservative_check before acting on the verdict: it is conservativity under a Horn rule table, not in a description logic.")]
+    #[tool(name = "onto_plan", description = "Terraform-style plan: diff current store against proposed Turtle. Shows added/removed classes/properties, blast radius, risk score, and locked IRI violations. All of that is about SHAPE. Conservativity (on by default, check_conservativity=false skips it) asks what the change MEANS: whether the change alters any consequence over the names the store already uses, under the rule table in conservativity_profile. That is the check a shape diff cannot do — adding one rdfs:domain reclassifies every existing individual of that property while adding no class and removing nothing, so every other number in the plan stays green. It reasons both graphs to a fixpoint, which is why it can be switched off; when it is off the plan says so under `conservativity` rather than staying silent. Read the honesty note in onto_conservative_check before acting on the verdict: it is conservativity under a Horn rule table, not in a description logic. The `logic` block (on by default, check_logic=false skips it) asks whether the change BREAKS something: TBox self-defects the store did not have (the onto_defects kinds) and whether the owl-dl tableaux proves the proposed graph inconsistent where the store was not; either makes risk_score `high`, and `risk_reasons` says why. `abox_consistent` is null, never true, when the reasoner budget ran out or the graph uses a construct the tableaux does not model. onto_apply does not gate on any of this; the caller does.")]
     pub async fn onto_plan(&self, Parameters(input): Parameters<OntoPlanInput>) -> String {
         let planner = crate::plan::Planner::with_owner(
             self.db.clone(),
@@ -2521,7 +2521,7 @@ impl OpenOntologiesServer {
         // microseconds an individual.
         //
         // A plan is a deliberate pre-production act, not an interactive query,
-        // and that cost buys the only part of a plan that is about MEANING. In
+        // and that cost buys the part of a plan that asks what a change MEANS. In
         // the run above every shape number stayed at zero — no class added,
         // none removed, blast radius zero, risk low — while 901 consequences
         // appeared that were not there before. A safety check that is off by
@@ -2551,7 +2551,13 @@ impl OpenOntologiesServer {
                 ..Default::default()
             }
         });
-        match planner.plan_checked(&input.new_turtle, conservativity) {
+        // The logic check (#336) is on by default, like conservativity, and
+        // through the same function as the CLI and batch.
+        let checks = crate::plan::PlanChecks {
+            conservativity,
+            logic: input.check_logic.unwrap_or(true),
+        };
+        match planner.plan_with(&input.new_turtle, checks) {
             Ok(result) => {
                 self.lineage().record(&self.session_id, "P", "plan", "computed");
                 result

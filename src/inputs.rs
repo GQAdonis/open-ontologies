@@ -592,8 +592,8 @@ pub struct OntoPlanInput {
     /// DEFAULT TRUE since #196. Pass `false` to skip it, and the plan then says
     /// it did not look rather than staying silent.
     ///
-    /// This is the only part of a plan that is about MEANING. Everything else
-    /// is shape, and shape cannot see the change that matters most: adding one
+    /// This asks what the change MEANS; `check_logic` asks what it breaks.
+    /// Everything else is shape, and shape cannot see the change that matters most: adding one
     /// `rdfs:domain` triple adds no class, removes nothing, has a blast radius
     /// of zero and scores `low`, while retyping every existing individual of
     /// that property.
@@ -614,6 +614,18 @@ pub struct OntoPlanInput {
     /// reproducible by hand. Defaults to a temporary directory.
     #[serde(default)]
     pub conservativity_out_dir: Option<String>,
+    /// Also ask whether the change BREAKS something (#336): a TBox self-defect
+    /// the store did not have (the eight kinds of `onto_defects`, such as a
+    /// class made disjoint with its own ancestor), or a proposed graph the
+    /// owl-dl tableaux proves inconsistent where the store was not. Either one
+    /// makes `risk_score` `high`.
+    ///
+    /// DEFAULT TRUE. Pass `false` to skip it; the `logic` block then says
+    /// `checked_by: "not_checked"` with every verdict `null`. The consistency
+    /// half runs under the `[reasoner]` budget, and a run that exhausts it
+    /// reports `abox_consistent: null` with the reason, never `true`.
+    #[serde(default)]
+    pub check_logic: Option<bool>,
 }
 
 /// Input for `onto_module_extract` — a locality module, not a slice.

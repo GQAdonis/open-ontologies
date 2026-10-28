@@ -126,6 +126,7 @@ impl BatchRunner {
             "query" => self.exec_query(&cmd.args),
             "validate" => self.exec_validate(&cmd.args),
             "lint" => self.exec_lint(&cmd.args),
+            "defects" => self.exec_defects(&cmd.args),
             "reason" => self.exec_reason(&cmd.args),
             "certificate-check" | "certificate_check" => self.exec_certificate_check(&cmd.args),
             "fol" => self.exec_fol(&cmd.args),
@@ -277,6 +278,51 @@ impl BatchRunner {
                     .unwrap_or_else(|e| format!(r#"{{"error":"{}"}}"#, e));
                 serde_json::from_str(&result).unwrap_or(json!({"raw": result}))
             }
+            Err(e) => json!({"error": e.to_string()}),
+        }
+    }
+
+    /// `defects [path] [--limit N]`. With a path, the file is checked alone,
+    /// as the CLI subcommand checks it; without one, the batch's own store is,
+    /// so `load x.ttl` then `defects` checks what was loaded. The CLI proxies
+    /// `defects` here when a daemon is up, and there was no arm, so it answered
+    /// `unknown batch command` and exited 1 (#336).
+    fn exec_defects(&self, args: &[String]) -> Value {
+        use crate::defects::Defects;
+        let limit = match Self::flag_value(args, "--limit") {
+            None => Defects::MAX_PER_KIND,
+            Some(v) => match v.parse::<usize>() {
+                Ok(n) => n,
+                Err(_) => return json!({"error": format!("--limit takes a whole number, got '{v}'")}),
+            },
+        };
+        let mut skip_next = false;
+        let path = args.iter().find(|a| {
+            if std::mem::take(&mut skip_next) {
+                return false;
+            }
+            if a.as_str() == "--limit" {
+                skip_next = true;
+                return false;
+            }
+            !a.starts_with("--")
+        });
+        let graph = match path {
+            None => self.graph.clone(),
+            Some(p) => {
+                let content = match crate::graph::GraphStore::read_as_turtle(p) {
+                    Ok(c) => c,
+                    Err(e) => return json!({"error": e.to_string()}),
+                };
+                let g = Arc::new(GraphStore::new());
+                if let Err(e) = g.load_turtle(&content, None) {
+                    return json!({"error": e.to_string()});
+                }
+                g
+            }
+        };
+        match Defects::check_with_limit(&graph, limit) {
+            Ok(result) => serde_json::from_str(&result).unwrap_or(json!({"raw": result})),
             Err(e) => json!({"error": e.to_string()}),
         }
     }
@@ -960,7 +1006,12 @@ impl BatchRunner {
                         max_rows: 1_000_000,
                     }
                 });
-                let result = planner.plan_checked(&turtle, opts)
+                // The logic check (#336) is on by default for the same reason.
+                let checks = crate::plan::PlanChecks {
+                    conservativity: opts,
+                    logic: !args.iter().any(|a| a == "--no-logic-check"),
+                };
+                let result = planner.plan_with(&turtle, checks)
                     .unwrap_or_else(|e| format!(r#"{{"error":"{}"}}"#, e));
                 serde_json::from_str(&result).unwrap_or(json!({"raw": result}))
             }

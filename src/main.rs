@@ -840,12 +840,20 @@ enum Commands {
     /// Plan changes: diff current vs proposed Turtle
     Plan {
         file: String,
-        /// Skip the conservativity check, which is the only part of a plan
-        /// that is about MEANING and is ON by default since #196. It reasons
+        /// Skip the conservativity check, which asks what the change MEANS
+        /// and is ON by default since #196. It reasons
         /// both graphs to a fixpoint, about 11 microseconds an individual, so
         /// this is the thing to reach for on a store big enough that it hurts.
         #[arg(long)]
         no_conservativity: bool,
+        /// Skip the logic check (#336): the eight TBox self-defect kinds of
+        /// `defects` on the proposed graph against the store, and the owl-dl
+        /// consistency of the proposed graph under the [reasoner] budget. ON by
+        /// default; a new defect or an inconsistency the store did not have
+        /// makes risk_score `high`. The exit code stays 0 either way: read
+        /// `risk_score` and `logic` to gate on it.
+        #[arg(long)]
+        no_logic_check: bool,
     },
     /// Apply planned changes (safe or migrate)
     Apply {
@@ -1400,10 +1408,13 @@ impl Commands {
                 }
                 cmd("ingest", a)
             }
-            Commands::Plan { file, no_conservativity } => {
+            Commands::Plan { file, no_conservativity, no_logic_check } => {
                 let mut a = vec![absolutize(file)];
                 if *no_conservativity {
                     a.push("--no-conservativity".into());
+                }
+                if *no_logic_check {
+                    a.push("--no-logic-check".into());
                 }
                 cmd("plan", a)
             }
@@ -2788,7 +2799,12 @@ async fn async_main() -> anyhow::Result<()> {
         }
         Commands::Defects { input, limit } => {
             use open_ontologies::defects::Defects;
-            let (_db, graph) = setup(&cli.data_dir)?;
+            // The FILE is checked, alone, in a store of its own. This used to
+            // load it into the main store, so under persistent storage it was
+            // checked together with whatever the store held and its triples
+            // were left behind in it, while the same command proxied to a
+            // daemon checked the file alone.
+            let graph = std::sync::Arc::new(GraphStore::new());
             let raw = if input == "-" {
                 let mut buf = String::new();
                 std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)?;
@@ -3599,7 +3615,7 @@ async fn async_main() -> anyhow::Result<()> {
         }
 
         // ─── Lifecycle ──────────────────────────────────────────────
-        Commands::Plan { file, no_conservativity } => {
+        Commands::Plan { file, no_conservativity, no_logic_check } => {
             let (db, graph) = setup(&cli.data_dir)?;
             let turtle = std::fs::read_to_string(&file)?;
             let planner = open_ontologies::plan::Planner::new(db, graph);
@@ -3616,9 +3632,17 @@ async fn async_main() -> anyhow::Result<()> {
                     max_rows: 1_000_000,
                 }
             });
+            let checks = open_ontologies::plan::PlanChecks {
+                conservativity: opts,
+                logic: !no_logic_check,
+            };
             let result = planner
-                .plan_checked(&turtle, opts)
+                .plan_with(&turtle, checks)
                 .unwrap_or_else(|e| format!(r#"{{"error":"{}"}}"#, e));
+            // Exit 1 on an error only, as before. A plan is a report, and a
+            // `high` risk_score has always exited 0 when it came from removals;
+            // one that comes from the logic check does the same, so a pipeline
+            // gates on `risk_score` / `logic` and one rule covers both.
             output_result_checked(&result, cli.pretty);
         }
         Commands::Apply { mode, plan_id } => {
@@ -4072,7 +4096,7 @@ mod proxy_serialization_tests {
     #[test]
     fn an_absolute_path_is_left_alone() {
         let abs = if cfg!(windows) { r"C:\onto\proposed.ttl" } else { "/onto/proposed.ttl" };
-        let (_, args) = args_of(&Commands::Plan { file: abs.into(), no_conservativity: false });
+        let (_, args) = args_of(&Commands::Plan { file: abs.into(), no_conservativity: false, no_logic_check: false });
         assert_eq!(args, vec![abs.to_string()]);
     }
 
@@ -4160,7 +4184,9 @@ mod proxy_serialization_tests {
             Commands::History,
             Commands::Rollback { label: "v1".into() },
             Commands::Ingest { path: "x.csv".into(), format: None, mapping: None, base_iri: None },
-            Commands::Plan { file: "p.ttl".into(), no_conservativity: false },
+            Commands::Plan { file: "p.ttl".into(), no_conservativity: false, no_logic_check: false },
+            Commands::Plan { file: "p.ttl".into(), no_conservativity: true, no_logic_check: true },
+            Commands::Defects { input: "x.ttl".into(), limit: 0 },
             Commands::Apply { mode: "safe".into(), plan_id: None },
             Commands::Enforce { pack: "generic".into() },
             Commands::Monitor,

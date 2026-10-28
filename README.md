@@ -118,8 +118,9 @@ the part that survives examination.
 > **This is not an ontology editor.** Use Protégé to draw class hierarchies. You
 > run Open Ontologies on the change, before the change goes to production.
 >
-> **The tool is like Terraform, and this is on purpose. But the plan is semantic,
-> not syntactic.** A text diff is `git diff`, and you have `git diff` already.
+> **The tool is like Terraform, and this is on purpose. But the plan checks what a
+> change means and what it breaks, not only its text.** A text diff is `git diff`,
+> and you have `git diff` already.
 
 You do not need a JVM. You do not need Protégé. The engine speaks MCP to Claude,
 to Cursor, and to other clients of that protocol.
