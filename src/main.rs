@@ -384,8 +384,17 @@ enum Commands {
     Diff { old_path: String, new_path: String },
     /// Lint: check for missing labels, domains, ranges
     Lint { input: String },
-    /// Defects: check the ONTOLOGY against itself, before any data is judged by it
-    Defects { input: String },
+    /// Defects: check the ONTOLOGY against itself, before any data is judged by it.
+    ///
+    /// `defect_count` counts findings, one per row: a class under two disjoint
+    /// pairs is two findings. `affected_classes` counts the distinct classes.
+    Defects {
+        input: String,
+        /// The most rows of any one kind to list. `0` lists every row. The full
+        /// count of a kind cut short is still reported under `truncated`.
+        #[arg(long, default_value_t = open_ontologies::defects::Defects::MAX_PER_KIND)]
+        limit: usize,
+    },
     /// Convert between RDF formats, or to OWL 2 functional syntax (`--to ofn`)
     Convert {
         path: String,
@@ -1077,7 +1086,10 @@ impl Commands {
             Commands::Stats => cmd("stats", vec![]),
             Commands::Query { query } => cmd("query", vec![query.clone()]),
             Commands::Lint { input } => cmd("lint", vec![absolutize(input)]),
-            Commands::Defects { input } => cmd("defects", vec![absolutize(input)]),
+            Commands::Defects { input, limit } => cmd(
+                "defects",
+                vec![absolutize(input), "--limit".into(), limit.to_string()],
+            ),
             Commands::Reason {
                 profile,
                 certificate,
@@ -2774,7 +2786,7 @@ async fn async_main() -> anyhow::Result<()> {
                 .unwrap_or_else(|e| format!(r#"{{"error":"{}"}}"#, e));
             output_result_checked(&result, cli.pretty);
         }
-        Commands::Defects { input } => {
+        Commands::Defects { input, limit } => {
             use open_ontologies::defects::Defects;
             let (_db, graph) = setup(&cli.data_dir)?;
             let raw = if input == "-" {
@@ -2809,7 +2821,7 @@ async fn async_main() -> anyhow::Result<()> {
                 output_json(&serde_json::json!({"error": e.to_string()}), cli.pretty);
                 std::process::exit(1);
             }
-            let result = Defects::check(&graph)
+            let result = Defects::check_with_limit(&graph, limit)
                 .unwrap_or_else(|e| format!(r#"{{"error":"{}"}}"#, e));
             output_result_checked(&result, cli.pretty);
         }

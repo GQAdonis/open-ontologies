@@ -12,6 +12,15 @@ pub struct OntoValidateInput {
     pub inline: Option<bool>,
 }
 
+#[derive(Deserialize, JsonSchema, Default)]
+pub struct OntoDefectsInput {
+    /// The most rows of any one kind to list. Default 50. `0` lists every row.
+    /// The full count of a kind cut short is reported under `truncated`
+    /// whatever the limit, so the limit hides the listing and never the scale.
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
 #[derive(Deserialize, JsonSchema)]
 pub struct OntoConvertInput {
     /// Path to the source file: any format onto_load reads, OWL functional

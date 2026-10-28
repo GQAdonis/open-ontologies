@@ -6,6 +6,18 @@ All notable changes to Open Ontologies are documented here.
 
 ### Added
 
+- **`defects` says how many classes are affected, and its 50-a-kind listing
+  can be lifted** (#341). `defect_count` counts findings, one per query row,
+  and for `inherited_disjoint` a row is a (class, disjoint pair), so a class
+  under two disjoint pairs counted twice and the headline ran higher than the
+  reasoner's list of unsatisfiable classes with nothing saying why. The report
+  now carries `affected_classes` and `affected_properties` (distinct subjects)
+  beside it, and `kind_counts` gives `findings` and the affected count for each
+  of the eight kinds. `defects --limit N` on the CLI and `limit` on
+  `onto_defects` set the per-kind listing bound (default 50, `0` lists every
+  row), and `truncated` names a kind only when the bound in force cut it. On
+  the issue's reproduction: `defect_count` 2, `affected_classes` 1; with 80
+  classes under one disjoint pair, `--limit 0` lists all 80.
 - **`onto_convert`, the CLI `convert` and `batch` `convert` write OWL 2
   functional syntax (`--to ofn`)** (requested by @noahgift in #322). #311 gave
   the engine an OFN reader and no writer, so handing an ontology to the OWL
