@@ -796,6 +796,10 @@ impl ShaclValidator {
             // and the run came back CLEAN. Same defect in sh:in and sh:not.
             let mut or_alternatives: HashMap<String, Vec<String>> = HashMap::new();
             let mut or_unsupported: HashSet<String> = HashSet::new();
+            // Property shape -> a member datatype the store does not preserve.
+            // The direct sh:datatype path refuses that question; a member
+            // answering it reported every widened value as matching nothing.
+            let mut or_unpreserved: HashMap<String, String> = HashMap::new();
             let or_rows = query_solutions_bound(
                 &shapes_store,
                 &format!(
@@ -835,7 +839,12 @@ impl ShaclValidator {
                     continue;
                 }
                 let clause = if let Some(dt) = row.get("datatype") {
-                    datatype_conforms(&strip_angle_brackets(dt), "val")
+                    let dt = strip_angle_brackets(dt);
+                    if datatype_is_indistinguishable_in_store(&dt) {
+                        or_unpreserved.insert(p, dt);
+                        continue;
+                    }
+                    datatype_conforms(&dt, "val")
                 } else if let Some(c) = row.get("class") {
                     format!(
                         "EXISTS {{ ?val <http://www.w3.org/1999/02/22-rdf-syntax-ns#type>/<http://www.w3.org/2000/01/rdf-schema#subClassOf>* <{}> }}",
@@ -848,6 +857,13 @@ impl ShaclValidator {
                     continue;
                 };
                 or_alternatives.entry(p).or_default().push(clause);
+            }
+            for (p, dt) in &or_unpreserved {
+                or_alternatives.remove(p);
+                if !or_unsupported.contains(p) {
+                    let path = or_paths.get(p).cloned().unwrap_or_default();
+                    skipped.push(unpreserved_datatype_skip(&shape_iri, "sh:or", &path, dt));
+                }
             }
             for p in &or_unsupported {
                 or_alternatives.remove(p);
@@ -876,6 +892,10 @@ impl ShaclValidator {
             // and 198 real violations were reported as a clean run.
             let mut not_clauses: HashMap<String, Vec<String>> = HashMap::new();
             let mut not_unsupported: HashSet<String> = HashSet::new();
+            // As `or_unpreserved`. Here answering anyway was a false clean: a
+            // value of the forbidden datatype read as xsd:integer, did not
+            // match, and satisfied the negation.
+            let mut not_unpreserved: HashMap<String, String> = HashMap::new();
             let not_rows = query_solutions_bound(
                 &shapes_store,
                 &format!(
@@ -918,7 +938,12 @@ impl ShaclValidator {
                     continue;
                 }
                 let clause = if let Some(dt) = row.get("datatype") {
-                    datatype_conforms(&strip_angle_brackets(dt), "val")
+                    let dt = strip_angle_brackets(dt);
+                    if datatype_is_indistinguishable_in_store(&dt) {
+                        not_unpreserved.insert(p, dt);
+                        continue;
+                    }
+                    datatype_conforms(&dt, "val")
                 } else if let Some(c) = row.get("class") {
                     format!(
                         "EXISTS {{ ?val <http://www.w3.org/1999/02/22-rdf-syntax-ns#type>/<http://www.w3.org/2000/01/rdf-schema#subClassOf>* <{}> }}",
@@ -938,6 +963,13 @@ impl ShaclValidator {
                     continue;
                 };
                 not_clauses.entry(p).or_default().push(clause);
+            }
+            for (p, dt) in &not_unpreserved {
+                not_clauses.remove(p);
+                if !not_unsupported.contains(p) {
+                    let path = not_paths.get(p).cloned().unwrap_or_default();
+                    skipped.push(unpreserved_datatype_skip(&shape_iri, "sh:not", &path, dt));
+                }
             }
             for p in &not_unsupported {
                 not_clauses.remove(p);
@@ -1184,6 +1216,17 @@ impl ShaclValidator {
                     row.get("message").cloned().filter(|_| !q_message.is_empty()),
                 );
 
+                if let Some(dt) = row.get("datatype").map(|d| strip_angle_brackets(d))
+                    && datatype_is_indistinguishable_in_store(&dt)
+                {
+                    skipped.push(unpreserved_datatype_skip(
+                        &shape_iri,
+                        "sh:qualifiedValueShape",
+                        &q_path,
+                        &dt,
+                    ));
+                    continue;
+                }
                 let clause = if row.get("other").is_some() {
                     None
                 } else if let Some(c) = row.get("class") {
@@ -1460,15 +1503,7 @@ impl ShaclValidator {
                     // for every value that satisfied the shape: nine of them in
                     // jsonld-escaping-conformance, which is how this was found.
                     if datatype_is_indistinguishable_in_store(&dt) {
-                        skipped.push(serde_json::json!({
-                            "shape": strip_angle_brackets(&shape_iri),
-                            "constraint": "sh:datatype",
-                            "path": path,
-                            "datatype": dt,
-                            "reason": "the store does not preserve this datatype IRI, so a value \
-                                       carrying it is indistinguishable from one carrying the type \
-                                       it derives from; the constraint was not evaluated",
-                        }));
+                        skipped.push(unpreserved_datatype_skip(&shape_iri, "sh:datatype", &path, &dt));
                         continue;
                     }
                     // One evaluator gave two answers to one constraint. SHACL
@@ -2977,6 +3012,24 @@ fn datatype_is_indistinguishable_in_store(datatype: &str) -> bool {
     )
 }
 
+
+/// The `skipped_constraints` entry for a constraint that names a datatype
+/// [`datatype_is_indistinguishable_in_store`] says cannot be decided. One
+/// record, so the direct `sh:datatype` constraint and the `sh:or`, `sh:not`
+/// and `sh:qualifiedValueShape` members that name such a datatype refuse in
+/// the same words: the member paths used to answer the question the direct
+/// path refuses, and answered it wrongly.
+fn unpreserved_datatype_skip(shape: &str, constraint: &str, path: &str, datatype: &str) -> serde_json::Value {
+    serde_json::json!({
+        "shape": strip_angle_brackets(shape),
+        "constraint": constraint,
+        "path": path,
+        "datatype": datatype,
+        "reason": "the store does not preserve this datatype IRI, so a value \
+                   carrying it is indistinguishable from one carrying the type \
+                   it derives from; the constraint was not evaluated",
+    })
+}
 
 /// The SPARQL pattern selecting the focus nodes of one target, bound to `var`.
 ///

@@ -46,6 +46,16 @@ All notable changes to Open Ontologies are documented here.
 
 ### Fixed
 
+- **A datatype the store cannot tell apart is refused inside `sh:or`,
+  `sh:not` and `sh:qualifiedValueShape`, as it already was on its own.** The
+  store widens xsd:int, xsd:nonNegativeInteger and the other integer-derived
+  types (and xsd:dateTimeStamp) to the type they derive from, and the direct
+  `sh:datatype` constraint refuses to decide them. A member naming one did
+  not: `sh:or` and a qualified minimum reported every conforming value, and
+  `sh:not [ sh:datatype xsd:nonNegativeInteger ]` returned `conforms: true`
+  over values of exactly that type. Each now records the constraint in
+  `skipped_constraints` with the direct path's reason and suppresses the
+  verdict. W3C columns unchanged (61, 53).
 - **A custom `sh:severity` keeps its namespace in the JSON report** (#334).
   Every path set `severity` to the text after the last `#` of the declared
   IRI, and every reader takes a bare name as `sh:`, so W3C
