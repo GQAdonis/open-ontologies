@@ -61,6 +61,11 @@ All notable changes to Open Ontologies are documented here.
   datatype on a property inside the referenced shape and not on the shape
   itself, so every value the store had widened was reported. The `sh:node` is
   now recorded as not evaluated. W3C columns unchanged.
+- **A node-level `sh:or` result carries the node shape's `sh:severity`.** It
+  was written `"Violation"` whatever the shape declared, and the RDF report
+  followed it with `sh:resultSeverity sh:Violation`; it now uses the declared
+  term, through the same `severity_name` as every other path (#334). W3C
+  columns unchanged.
 - **A custom `sh:severity` keeps its namespace in the JSON report** (#334).
   Every path set `severity` to the text after the last `#` of the declared
   IRI, and every reader takes a bare name as `sh:`, so W3C

@@ -1119,20 +1119,30 @@ impl ShaclValidator {
                         .collect();
                     members.sort();
                     let disjunction = members.join(" || ");
-                    let node_message_term = query_solutions(
+                    let node_terms = query_solutions(
                         &shapes_store,
                         &format!(
                             r#"PREFIX sh: <http://www.w3.org/ns/shacl#>
-                               SELECT ?m WHERE {{ {} sh:message ?m }}"#,
-                            shape_term
+                               SELECT ?m ?sev WHERE {{
+                                   OPTIONAL {{ {shape_term} sh:message ?m }}
+                                   OPTIONAL {{ {shape_term} sh:severity ?sev }}
+                               }}"#
                         ),
-                    )?
-                    .first()
-                    .and_then(|r| r.get("m").cloned());
+                    )?;
+                    let node_term = |k: &str| node_terms.first().and_then(|r| r.get(k).cloned());
+                    let node_message_term = node_term("m");
                     let node_message =
                         node_message_term.as_deref().map(strip_quotes).unwrap_or_default();
+                    // The node shape's sh:severity, as on every other path.
+                    // This one wrote "Violation" whatever was declared, and
+                    // the RDF report followed it with sh:Violation.
+                    let node_severity_term = node_term("sev");
+                    let node_severity = node_severity_term
+                        .as_deref()
+                        .map(severity_name)
+                        .unwrap_or_else(|| "Violation".to_string());
                     let node_or_rdf = RdfTerms::new(
-                        None,
+                        node_severity_term,
                         node_message_term.filter(|_| !node_message.is_empty()),
                     );
                     let query = format!(
@@ -1149,7 +1159,7 @@ impl ShaclValidator {
                                 node_message.clone()
                             };
                             violations.push(attribute(&shape_iri, &shape_iri, &node_or_rdf, serde_json::json!({
-                                "severity": "Violation",
+                                "severity": node_severity,
                                 "focus_node": strip_angle_brackets(focus),
                                 "value": strip_angle_brackets(focus),
                                 "constraint": "or",

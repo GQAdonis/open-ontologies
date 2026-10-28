@@ -285,6 +285,40 @@ ex:SparqlLevel a sh:NodeShape ; sh:targetClass ex:Person ;
     assert_eq!(got, want, "{j}");
 }
 
+/// `sh:or` asserted on a node shape over member shapes wrote every result as
+/// `"Violation"` whatever the shape declared, and the RDF report followed it
+/// with `sh:resultSeverity sh:Violation`. The node shape's `sh:severity` is
+/// the result's severity (SHACL 3.6.2) as on every other path.
+#[test]
+fn a_node_level_or_result_carries_the_shapes_declared_severity() {
+    for (declared, json, rdf) in [
+        ("sh:Warning", "Warning", "sh:Warning"),
+        ("sev:MySeverity", "http://ex.org/sev#MySeverity", "<http://ex.org/sev#MySeverity>"),
+        ("", "Violation", "sh:Violation"),
+    ] {
+        let severity = if declared.is_empty() { String::new() } else { format!("sh:severity {declared} ;") };
+        let shapes = format!(
+            r#"
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://ex.org/> .
+@prefix sev: <http://ex.org/sev#> .
+ex:S a sh:NodeShape ; sh:targetClass ex:Person ; {severity}
+    sh:or ( [ sh:property [ sh:path ex:email ; sh:minCount 1 ] ]
+            [ sh:property [ sh:path ex:phone ; sh:minCount 1 ] ] ) .
+"#
+        );
+        let j = json_report(DATA, &shapes);
+        assert_eq!(j["violation_count"], 1, "{declared}: {j}");
+        assert_eq!(j["violations"][0]["constraint"], "or", "{declared}: {j}");
+        assert_eq!(j["violations"][0]["severity"], json, "{declared}: {j}");
+        let s = parsed(&rdf_report(DATA, &shapes, ReportFormat::Turtle), RdfFormat::Turtle);
+        assert!(
+            ask(&s, &format!("?x sh:sourceConstraintComponent sh:OrConstraintComponent ; sh:resultSeverity {rdf}")),
+            "{declared}: the RDF report must carry {rdf}"
+        );
+    }
+}
+
 /// #335, MEASURED AND NOT FIXED IN THIS REPOSITORY. This test pins the loss
 /// so that it cannot be mistaken for a report-writer bug, and so that it fails,
 /// by name, on the day the store starts keeping lexical forms.
