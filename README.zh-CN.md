@@ -110,7 +110,7 @@ new consequences      901          rule table owl-rl, in 0.04s
 > **这不是一个本体编辑器。**要绘制类层次结构，请使用 Protégé。你在变更进入生产环境之前，
 > 对这次变更运行 Open Ontologies。
 >
-> **本工具在风格上类似 Terraform，这是刻意为之。但是这里的计划是语义层面的，不是语法层面的。**
+> **本工具在风格上类似 Terraform，这是刻意为之。但是这里的计划检查变更的含义以及它会破坏什么，而不只是检查文本。**
 > 文本差异就是 `git diff`，而你已经有 `git diff` 了。
 
 你不需要 JVM。你不需要 Protégé。引擎通过 MCP 与 Claude、Cursor 以及该协议的其他客户端通信。

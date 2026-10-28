@@ -543,12 +543,13 @@ impl OpenOntologiesServer {
         }
     }
 
-    #[tool(name = "onto_defects", description = "Check the ONTOLOGY itself, before any data is judged against it. Reports eight kinds of self-contradicting or self-defeating declaration: transitive_and_functional, symmetric_and_asymmetric, subclass_cycle, sub_property_cycle, disjoint_with_ancestor, inherited_disjoint, self_inverse, inverse_not_mutual. This is a different question from onto_dl_check: a transitive functional property is satisfiable and is still a trap, because the pair manufactures contradictions as soon as instances arrive. Run it after onto_load and before trusting any fact-level result, and on every marketplace pack before adopting it. Each kind is listed at most 50 times; the full total is reported under `truncated`.")]
-    fn onto_defects(&self) -> String {
+    #[tool(name = "onto_defects", description = "Check the ONTOLOGY itself, before any data is judged against it. Reports eight kinds of self-contradicting or self-defeating declaration: transitive_and_functional, symmetric_and_asymmetric, subclass_cycle, sub_property_cycle, disjoint_with_ancestor, inherited_disjoint, self_inverse, inverse_not_mutual. This is a different question from onto_dl_check: a transitive functional property is satisfiable and is still a trap, because the pair manufactures contradictions as soon as instances arrive. Run it after onto_load and before trusting any fact-level result, and on every marketplace pack before adopting it. `defect_count` counts FINDINGS, one per row, and a class under two disjoint pairs is two findings; `affected_classes` and `affected_properties` count the distinct subjects, which is the number to compare with a reasoner's unsatisfiable classes, and `kind_counts` gives both per kind. Each kind is listed at most `limit` times (default 50, 0 lists all); the full total of a kind cut short is reported under `truncated`.")]
+    pub fn onto_defects(&self, Parameters(input): Parameters<OntoDefectsInput>) -> String {
         if let Err(e) = self.registry.ensure_loaded() {
             return Self::err_json(format!("ensure_loaded: {e}"));
         }
-        crate::defects::Defects::check(&self.graph).unwrap_or_else(Self::err_json)
+        let limit = input.limit.unwrap_or(crate::defects::Defects::MAX_PER_KIND);
+        crate::defects::Defects::check_with_limit(&self.graph, limit).unwrap_or_else(Self::err_json)
     }
 
     #[tool(name = "onto_dlp_boundary", description = "Ask which of YOUR axioms the rule engine can actually SEE, before trusting a reasoning result. A certificate from onto_reason is a sound proof about the axioms the rules read, and it says nothing at all about the ones no rule fires on. A user can reason, get a green machine-checked certificate, and never learn that a third of the TBox was invisible to the rule table. This is that second question, and it is in the same register as onto_defects: run it after onto_load and BEFORE trusting any onto_reason result. TWO DIMENSIONS THAT ARE NEVER MERGED, because one is a rewrite of your ontology and the other is a patch to this engine. (1) THE FRAGMENT: is the axiom expressible as Horn rules over triple patterns at all? The line drawn is OWL 2 RL's class grammar (OWL 2 Profiles section 4.3), and `outside` there is a fact about the LANGUAGE that would hold of a perfect OWL 2 RL engine: a disjunction in the consequent, an existential in the head, a cardinality restriction, a negation in the antecedent. Each such axiom is listed individually with the reason. (2) THIS ENGINE: is there a rule in the table that fires on it? owl:hasKey and owl:propertyChainAxiom are perfectly Horn, OWL 2 RL has prp-key and prp-spo2 for them, and this engine implements neither, so those axioms are INSIDE the fragment and still invisible. They are reported in `inside_the_fragment_but_a_rule_is_not_implemented` and never in `outside_the_fragment`. An axiom that splits soundly gets a third bucket of its own, `partially_inside_the_fragment`, because a bucket called `outside` holding an axiom the rules half evaluate would be false in its own name: `A subClassOf (B and Out)` keeps its `A subClassOf B` half, and an owl:equivalentClass with an existential on one side keeps the direction cls-svf1 evaluates. `not_fully_seen_by_the_rule_table` is the headline and carries the three causes separately, because they are fixed in three different places. A conjunction in the ANTECEDENT does not split, because dropping a conjunct from a rule body makes it fire more often. The rule-table figures (78 OWL 2 RL rules, 29 evaluated in the fixpoint, 10 more detected only as a clash, 7 that conclude false and are not looked for, and the names of the rest) are DERIVED from reason::RULES_EVALUATED and reason::CLASH_RULES_NOT_DETECTED rather than typed. Every triple in the store lands in an axiom bucket or in a counted `not_classified` bucket, so nothing is passed over in silence. This is NOT a consistency check and states no verdict about satisfiability.")]
@@ -2507,7 +2508,7 @@ impl OpenOntologiesServer {
 
     // ── v2: Lifecycle tools ─────────────────────────────────────────────────
 
-    #[tool(name = "onto_plan", description = "Terraform-style plan: diff current store against proposed Turtle. Shows added/removed classes/properties, blast radius, risk score, and locked IRI violations. All of that is about SHAPE. Pass check_conservativity=true for the one part that is about MEANING: whether the change alters any consequence over the names the store already uses, under the rule table in conservativity_profile. That is the check a shape diff cannot do — adding one rdfs:domain reclassifies every existing individual of that property while adding no class and removing nothing, so every other number in the plan stays green. It reasons both graphs to a fixpoint, so it is opt-in; when it is off the plan says so under `conservativity` rather than staying silent. Read the honesty note in onto_conservative_check before acting on the verdict: it is conservativity under a Horn rule table, not in a description logic.")]
+    #[tool(name = "onto_plan", description = "Terraform-style plan: diff current store against proposed Turtle. Shows added/removed classes/properties, blast radius, risk score, and locked IRI violations. All of that is about SHAPE. Conservativity (on by default, check_conservativity=false skips it) asks what the change MEANS: whether the change alters any consequence over the names the store already uses, under the rule table in conservativity_profile. That is the check a shape diff cannot do — adding one rdfs:domain reclassifies every existing individual of that property while adding no class and removing nothing, so every other number in the plan stays green. It reasons both graphs to a fixpoint, which is why it can be switched off; when it is off the plan says so under `conservativity` rather than staying silent. Read the honesty note in onto_conservative_check before acting on the verdict: it is conservativity under a Horn rule table, not in a description logic. The `logic` block (on by default, check_logic=false skips it) asks whether the change BREAKS something: TBox self-defects the store did not have (the onto_defects kinds) and whether the owl-dl tableaux proves the proposed graph inconsistent where the store was not; either makes risk_score `high`, and `risk_reasons` says why. `abox_consistent` is null, never true, when the reasoner budget ran out or the graph uses a construct the tableaux does not model. onto_apply does not gate on any of this; the caller does.")]
     pub async fn onto_plan(&self, Parameters(input): Parameters<OntoPlanInput>) -> String {
         let planner = crate::plan::Planner::with_owner(
             self.db.clone(),
@@ -2526,7 +2527,7 @@ impl OpenOntologiesServer {
         // microseconds an individual.
         //
         // A plan is a deliberate pre-production act, not an interactive query,
-        // and that cost buys the only part of a plan that is about MEANING. In
+        // and that cost buys the part of a plan that asks what a change MEANS. In
         // the run above every shape number stayed at zero — no class added,
         // none removed, blast radius zero, risk low — while 901 consequences
         // appeared that were not there before. A safety check that is off by
@@ -2556,7 +2557,13 @@ impl OpenOntologiesServer {
                 ..Default::default()
             }
         });
-        match planner.plan_checked(&input.new_turtle, conservativity) {
+        // The logic check (#336) is on by default, like conservativity, and
+        // through the same function as the CLI and batch.
+        let checks = crate::plan::PlanChecks {
+            conservativity,
+            logic: input.check_logic.unwrap_or(true),
+        };
+        match planner.plan_with(&input.new_turtle, checks) {
             Ok(result) => {
                 self.lineage().record(&self.session_id, "P", "plan", "computed");
                 result

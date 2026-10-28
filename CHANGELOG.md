@@ -6,6 +6,38 @@ All notable changes to Open Ontologies are documented here.
 
 ### Added
 
+- **A plan says whether the change breaks the ontology, and scores it `high`
+  when it does** (#336, reported by @jpsanchezcalypso). `risk_score` came from
+  removal counts alone, so a change that made a named class unsatisfiable (R1:
+  `Manager ⊑ Person ⊑ Agent`, `Manager ⊥ Agent`) or the ABox inconsistent (R2:
+  `Machine ⊥ Person`, `alice a Machine` where `alice a Person`) removed nothing
+  and scored `low`. `plan`, `batch` `plan` and `onto_plan` now carry a `logic`
+  block through one function (`Planner::plan_with`): `new_defects`, the
+  `defects` findings the store did not have, and `abox_consistent`, the owl-dl
+  tableaux on the proposed graph under the `[reasoner]` budget, with
+  `abox_consistent_before` for the store when the proposed graph is
+  inconsistent. A new error- or warning-severity defect, or an inconsistency
+  the store was not proven to have, sets `risk_score` to `high`, and the new
+  `risk_reasons` says why. A check that ran out of budget, or a graph using a
+  construct the tableaux does not model, reports `abox_consistent: null` with
+  the reason, never `true`. On by default; `--no-logic-check` (CLI, `batch`) or
+  `check_logic: false` (`onto_plan`) skips it and the block says
+  `not_checked`. `apply` is unchanged and does not gate on the verdict, and the
+  exit code of `plan` is unchanged (1 on an error only), as it already was for
+  a `high` score from removals; `docs/lifecycle.md` says so. R1 and R2 now plan
+  `high` on all four entry points; the benign control stays `low`.
+- **`defects` says how many classes are affected, and its 50-a-kind listing
+  can be lifted** (#341). `defect_count` counts findings, one per query row,
+  and for `inherited_disjoint` a row is a (class, disjoint pair), so a class
+  under two disjoint pairs counted twice and the headline ran higher than the
+  reasoner's list of unsatisfiable classes with nothing saying why. The report
+  now carries `affected_classes` and `affected_properties` (distinct subjects)
+  beside it, and `kind_counts` gives `findings` and the affected count for each
+  of the eight kinds. `defects --limit N` on the CLI and `limit` on
+  `onto_defects` set the per-kind listing bound (default 50, `0` lists every
+  row), and `truncated` names a kind only when the bound in force cut it. On
+  the issue's reproduction: `defect_count` 2, `affected_classes` 1; with 80
+  classes under one disjoint pair, `--limit 0` lists all 80.
 - **`onto_convert`, the CLI `convert` and `batch` `convert` write OWL 2
   functional syntax (`--to ofn`)** (requested by @noahgift in #322). #311 gave
   the engine an OFN reader and no writer, so handing an ontology to the OWL
@@ -141,6 +173,17 @@ All notable changes to Open Ontologies are documented here.
   sites and cannot error. W3C `core/property/or-datatypes-001` reports 3 of 3
   violations where it reported 1: full-tuple column 51 to 52 PASS, report
   match 48 to 49 of 56, gated column unchanged at 61.
+
+- **`batch` runs `defects`** (#336). It had no arm, so `batch` answered
+  `{"error":"unknown batch command: 'defects'"}`, and so did the CLI `defects`
+  whenever a daemon was up, since the CLI proxies it there. `defects [path]
+  [--limit N]` checks the file alone, or the batch's own store when no path is
+  given. The proxy coverage test now lists `defects`. The local CLI `defects`
+  checked its file inside the main store, so under persistent storage it
+  judged the file together with whatever the store held and left the file's
+  triples behind in it; it now uses a store of its own, as the proxied form
+  does. No other MCP-only check (`onto_dlp_boundary`, `onto_dl_check`) is a CLI
+  command, so none is proxied and none was given a batch arm.
 - **`diff` and `drift` no longer hang on a symmetric blank-node graph** (#293).
   Both canonicalised blank nodes through oxrdf's RDFC-1.0, which sets no limit
   on `hash_n_degree_quads` calls, so the cost was factorial: a 7-node
