@@ -73,9 +73,11 @@ All notable changes to Open Ontologies are documented here.
   reports 200. A proxied run is unchanged, because `daemon start` passes
   `<data-dir>/config.toml` to `serve-http`. Measured on this branch, a
   proxied run reported 200 and 60 000 from the file. One committed artifact
-  shows the bug: `docs/assets/hqdm/owl-dl.json` names
-  `tableaux_test_timeout_ms = 120000` in its `source`, but its `budget` block
-  reports 10000 and 180000.
+  showed the bug: `docs/assets/hqdm/owl-dl.json` named
+  `tableaux_test_timeout_ms = 120000` in its `source` while its `budget` block
+  reported 10000 and 180000. Rerun with the fix, the same command reports
+  120000 and 900000 and every verdict field is unchanged (39 unsatisfiable,
+  none undetermined), so only the `budget` block was replaced.
 
 - **`diff` and `drift` no longer hang on a symmetric blank-node graph** (#293).
   Both canonicalised blank nodes through oxrdf's RDFC-1.0, which sets no limit
