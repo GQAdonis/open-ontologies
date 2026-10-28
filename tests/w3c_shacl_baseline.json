@@ -134,8 +134,8 @@
   "full_tuple": {
     "counts": {
       "total": 120,
-      "pass": 51,
-      "fail": 25,
+      "pass": 52,
+      "fail": 24,
       "undetermined": 44,
       "error": 0
     },
@@ -221,7 +221,7 @@
       "core/property/nodeKind-001": "PASS",
       "core/property/not-001": "PASS",
       "core/property/or-001": "PASS",
-      "core/property/or-datatypes-001": "FAIL",
+      "core/property/or-datatypes-001": "PASS",
       "core/property/pattern-001": "PASS",
       "core/property/pattern-002": "UNDETERMINED",
       "core/property/property-001": "FAIL",

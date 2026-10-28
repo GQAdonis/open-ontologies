@@ -47,15 +47,17 @@ use std::sync::Arc;
 
 /// Measured on 24 Oct 2026, suite commit 94d8bc2: 48 of the 56 core/ cases the
 /// conformance baseline records as PASS produce a report that matches the
-/// expected one on every compared predicate. The other eight are named below.
-const MATCHED_FLOOR: usize = 48;
+/// expected one on every compared predicate. 49 since #333 (28 Oct 2026, same
+/// suite commit), when `core/property/or-datatypes-001` started reporting all
+/// three of its `sh:or` violations. The other seven are named below.
+const MATCHED_FLOOR: usize = 49;
 
 /// The PASS cases whose full report differs, each with the measured cause.
 /// None is a defect of the report writer: each graph says what the JSON
 /// already said. They are the gaps the set comparison in
 /// `w3c_shacl_conformance_test.rs` cannot see, which is why this file exists.
 /// A case not listed here that stops matching fails by name.
-const KNOWN_DIFFERENCES: [(&str, &str); 8] = [
+const KNOWN_DIFFERENCES: [(&str, &str); 7] = [
     (
         "core/node/class-003",
         "ex:John is selected by sh:targetClass AND sh:targetNode and reported once per target \
@@ -83,13 +85,6 @@ const KNOWN_DIFFERENCES: [(&str, &str); 8] = [
          result where SHACL gives two",
     ),
     ("core/property/node-002", "sh:node selects DISTINCT ?focus, so no sh:value"),
-    (
-        "core/property/or-datatypes-001",
-        "an ENGINE false negative: of the three sh:or violations only the integer is reported. \
-         DATATYPE(owl:Thing) is a type error that drops the row inside FILTER, and \
-         \"none\"^^xsd:boolean satisfies DATATYPE() = xsd:boolean though it is ill-typed. The \
-         set comparison passes it because all three share one (focus, shape, component)",
-    ),
 ];
 
 const SUITE_BASE: &str = "https://w3c.github.io/data-shapes/data-shapes-test-suite/tests/";

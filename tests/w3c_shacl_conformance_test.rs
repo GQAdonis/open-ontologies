@@ -62,6 +62,10 @@
 //! `or-datatypes-001` (an `sh:or` false negative), and `pre-binding-001`,
 //! `-002` and `-007` under `sparql/`.
 //!
+//! With #333 fixed, `or-datatypes-001` reports all three of its violations
+//! (an IRI value and an ill-typed `"none"^^xsd:boolean` had been dropped) and
+//! the column scores PASS 52 (measured 2026-10-28, same suite commit).
+//!
 //! Severity is in the full-tuple column and NOT in the gated one, by
 //! measurement rather than by principle. The old reason for leaving it out
 //! ("the engine's `severity` field is not yet driven by `sh:severity`") is

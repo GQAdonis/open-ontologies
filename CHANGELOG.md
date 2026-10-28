@@ -46,6 +46,19 @@ All notable changes to Open Ontologies are documented here.
 
 ### Fixed
 
+- **A value that is not a well-typed literal of D no longer satisfies a
+  `sh:datatype D` test anywhere in the SHACL engine** (#333). The test was
+  spliced as `DATATYPE(?v) = <D>`, a SPARQL type error for an IRI or blank
+  node, and FILTER drops a row whose test errors: an IRI value under `sh:or`
+  over datatypes matched no alternative and was never reported, and an IRI
+  passed a property shape's `sh:datatype` and a datatype nested under
+  `sh:node` or a node-level `sh:or`. Separately, the `sh:or`, `sh:not`,
+  `sh:qualifiedValueShape` and `sh:node` member tests lacked the lexical check
+  the direct constraints had, so `"none"^^xsd:boolean` counted as an
+  xsd:boolean. One helper, `datatype_conforms`, is now spliced at all eight
+  sites and cannot error. W3C `core/property/or-datatypes-001` reports 3 of 3
+  violations where it reported 1: full-tuple column 51 to 52 PASS, report
+  match 48 to 49 of 56, gated column unchanged at 61.
 - **`diff` and `drift` no longer hang on a symmetric blank-node graph** (#293).
   Both canonicalised blank nodes through oxrdf's RDFC-1.0, which sets no limit
   on `hash_n_degree_quads` calls, so the cost was factorial: a 7-node

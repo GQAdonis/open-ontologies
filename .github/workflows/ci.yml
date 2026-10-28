@@ -939,7 +939,8 @@ jobs:
   # and no named PASS may regress against tests/w3c_shacl_baseline.json, in each
   # of two columns: the (focus, source shape, component) set, 61 of 120 PASS on
   # 24 Oct 2026, and the full tuple with path, value and severity as a multiset,
-  # 51 of 120 (#319; 12 before #318 put sh:value on default-path results).
+  # 52 of 120 on 28 Oct 2026 (#319; 12 before #318 put sh:value on default-path
+  # results, 51 before #333 fixed the sh:or datatype false negative).
   # Pretending otherwise would be exactly the silent success
   # this repository keeps finding elsewhere. See the module docs in
   # tests/w3c_shacl_conformance_test.rs.
