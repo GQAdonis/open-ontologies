@@ -69,6 +69,15 @@
 //! namespace whole, `severity-002` passes, and the column scores PASS 53
 //! (measured 2026-10-28, same suite commit). No test now differs in severity.
 //!
+//! One gap this column cannot see by construction (#335). The expected report
+//! is read through `load_graph`, an oxigraph `Store`, which encodes a literal
+//! of a known XSD datatype by value and gives it back canonically, exactly as
+//! the engine's own stores do. So `maxExclusive-001`'s expected
+//! `sh:value 4.0` is read as `"4"^^xsd:decimal`, agrees with the engine's
+//! equally canonicalised answer, and scores PASS here, while
+//! `tests/shacl_validation_report_w3c_test.rs`, which parses the expected
+//! report without a store, holds it as a difference.
+//!
 //! Severity is in the full-tuple column and NOT in the gated one, by
 //! measurement rather than by principle. The old reason for leaving it out
 //! ("the engine's `severity` field is not yet driven by `sh:severity`") is

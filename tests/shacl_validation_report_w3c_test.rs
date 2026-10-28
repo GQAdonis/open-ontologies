@@ -70,8 +70,12 @@ const KNOWN_DIFFERENCES: [(&str, &str); 7] = [
     ),
     (
         "core/node/maxExclusive-001",
-        "the store keeps xsd:decimal by value, so the data's \"4.0\"^^xsd:decimal comes back as \
-         \"4\"^^xsd:decimal in sh:focusNode and sh:value",
+        "#335, measured: oxigraph encodes a known-datatype literal by value at insert \
+         (numeric_encoder.rs, parse_decimal_str) and decodes it canonically, in the shapes \
+         store as in the data store, so sh:targetNode 4.0 is \"4\"^^xsd:decimal before the \
+         first query runs. Not recoverable here: \"4.0\" and \"4\" load as one triple. Pinned \
+         by a_non_canonical_literal_is_canonicalised_by_the_store_before_validation_sees_it \
+         in tests/shacl_validation_report_test.rs",
     ),
     ("core/node/minExclusive-001", "same cause as maxExclusive-001"),
     (
