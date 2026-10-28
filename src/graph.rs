@@ -1392,13 +1392,14 @@ impl GraphStore {
     /// Round-trip triples through a STORE, in order, keeping duplicates.
     ///
     /// Parsing alone is not enough, and this is measured rather than assumed:
-    /// oxigraph's parser preserves a literal's lexical form, and it is the
-    /// STORE that normalises it. `"01"^^xsd:integer` comes back from
-    /// [`parse_triples_ordered`](Self::parse_triples_ordered) exactly as
-    /// written and out of [`all_triples`](Self::all_triples) as
-    /// `"1"^^xsd:integer`. A caller that compares its own spelling of a term
-    /// against what a certificate holds therefore has to push the term through
-    /// a store first, or it matches nothing and the miss looks like data loss.
+    /// A caller that compares its own spelling of a term against what a
+    /// certificate holds pushes the term through a store first, so the two are
+    /// spelled by the same code. Until #335 that was what made them match:
+    /// Oxigraph 0.5.9's parser kept `"01"^^xsd:integer` and its store gave it
+    /// back as `"1"^^xsd:integer`. The pinned store keeps literals as written,
+    /// so the round trip no longer respells a literal, and `"01"` and `"1"`
+    /// are two terms on both sides; it still refuses what no serialiser can
+    /// write, and it keeps the comparison honest if the store changes again.
     ///
     /// Each triple gets its own named graph, because a store is a SET: two
     /// identical inputs would otherwise collapse to one and the caller's
