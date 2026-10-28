@@ -142,6 +142,9 @@ data_dir = "~/.open-ontologies"
 # cannot be the bound that fires: 5 x 10000 = 50000, well under 180000. Lower it
 # below that to make it the binding one. Every `owl-dl` run reports which of the
 # two is binding, in `budget.binding_bound`, with a sentence saying why.
+# One-shot CLI commands read this section from <data-dir>/config.toml, and
+# `reason --phase-timeout-ms` / `--classify-timeout-ms` override it for one run
+# (CLI > config > default; no env var). A daemon reads it once, at start.
 
 # [feedback]
 # Lint / enforce self-calibration thresholds (number of dismissals before
@@ -538,6 +541,20 @@ enum Commands {
         /// refused together with --valid-at or --as-of.
         #[arg(long)]
         all_versions: bool,
+        /// `owl-dl` only: wall-clock budget for one PHASE of the run, in
+        /// milliseconds. `0` means no limit. CLI > `[reasoner]
+        /// tableaux_test_timeout_ms` in `<data-dir>/config.toml` > 10000. No
+        /// environment variable sets it. The run's `budget` block reports the
+        /// value in force. Never proxied: a running daemon fixes its budgets
+        /// at start, so with one up this is refused unless --no-connect.
+        #[arg(long, value_name = "MS")]
+        phase_timeout_ms: Option<usize>,
+        /// `owl-dl` only: wall-clock CEILING for the whole run, in
+        /// milliseconds. `0` means no ceiling. CLI > `[reasoner]
+        /// classify_timeout_ms` in `<data-dir>/config.toml` > 180000. No
+        /// environment variable sets it. Never proxied, as --phase-timeout-ms.
+        #[arg(long, value_name = "MS")]
+        classify_timeout_ms: Option<usize>,
     },
     /// Export the loaded ontology as first-order logic, for a prover or a model finder
     ///
@@ -1085,7 +1102,16 @@ impl Commands {
                 valid_at,
                 as_of,
                 all_versions,
+                phase_timeout_ms,
+                classify_timeout_ms,
             } => {
+                // The reasoner clocks are process-wide, and the daemon serves
+                // every client from one process. A per-request budget would leak
+                // into concurrent and later runs, so the batch handler takes
+                // none, and the command stays local (see `daemon_refuses`).
+                if phase_timeout_ms.is_some() || classify_timeout_ms.is_some() {
+                    return None;
+                }
                 let mut a = vec!["--profile".into(), profile.clone()];
                 if let Some(c) = certificate {
                     a.push("--certificate".into());
@@ -1453,18 +1479,52 @@ impl Commands {
 /// false — so there is one copy now, and one place where the decision to proxy
 /// is made.
 async fn proxy_if_daemon(ctx: &ProxyCtx, input: &str, bail: bool) -> anyhow::Result<Option<i32>> {
-    if ctx.no_connect {
-        return Ok(None);
-    }
-    let Some(info) = open_ontologies::daemon::read_daemon_info(&ctx.data_dir) else {
+    let Some(info) = live_daemon(ctx) else {
         return Ok(None);
     };
+    open_ontologies::connect::proxy_batch(&info, input, bail, json_mode(), ctx.pretty).await
+}
+
+/// The daemon a proxy-able command would be sent to, if any: `None` under
+/// `--no-connect`, with no daemon.json, or when the recorded PID is dead.
+fn live_daemon(ctx: &ProxyCtx) -> Option<open_ontologies::daemon::DaemonInfo> {
+    if ctx.no_connect {
+        return None;
+    }
+    let info = open_ontologies::daemon::read_daemon_info(&ctx.data_dir)?;
     if !open_ontologies::daemon::is_daemon_alive(info.pid) {
         // Stale daemon.json — clean up silently and fall through to local.
         open_ontologies::daemon::remove_daemon_info(&ctx.data_dir);
-        return Ok(None);
+        return None;
     }
-    open_ontologies::connect::proxy_batch(&info, input, bail, json_mode(), ctx.pretty).await
+    Some(info)
+}
+
+/// Why a command that is normally proxied cannot be run while `info`'s daemon
+/// is up, or `None` when it can be run (proxied or locally).
+///
+/// `to_batch_command` keeps a command local when it carries a flag the batch
+/// handler cannot honour. For most commands that is enough. For `reason` it is
+/// not: the graph the caller loaded lives in the daemon, so a local run reads a
+/// different store (an empty one in memory mode) and answers about the wrong
+/// data while looking like a success. Refusing says so instead.
+fn daemon_refuses(cmd: &Commands, info: &open_ontologies::daemon::DaemonInfo) -> Option<String> {
+    match cmd {
+        Commands::Reason { phase_timeout_ms, classify_timeout_ms, .. }
+            if phase_timeout_ms.is_some() || classify_timeout_ms.is_some() =>
+        {
+            Some(format!(
+                "reason --phase-timeout-ms / --classify-timeout-ms cannot be sent to the running \
+                 daemon (pid {}). Its reasoner budgets are fixed when it starts, from [reasoner] in \
+                 its data directory's config.toml, and one request may not change them for every \
+                 other client. A local run would read this process's own store, not the graph the \
+                 daemon holds. Pass --no-connect to reason over the local store, or set [reasoner] \
+                 and restart the daemon.",
+                info.pid
+            ))
+        }
+        _ => None,
+    }
 }
 
 /// The parts of `Cli` the proxy needs, taken before `cli.command` is matched by
@@ -1517,11 +1577,21 @@ fn setup(data_dir: &str) -> anyhow::Result<(StateDb, Arc<GraphStore>)> {
     // server modes (loaded from `<data_dir>/config.toml` if present). This is
     // what makes `open-ontologies load foo.ttl` + `open-ontologies query ...`
     // share state when persistence is enabled.
+    //
+    // The rest of the file applies too (#339). Only `[storage]` used to be kept,
+    // and `runtime::init_from_config` ran in the three server modes alone, so a
+    // one-shot `reason --profile owl-dl` ran on the default reasoner budgets
+    // whatever `[reasoner]` said, and its `budget` block reported those defaults
+    // as though they were the configuration. `init_from_config` only stores
+    // atomics (reasoner caps and clocks, cache prefix, feedback thresholds, repo
+    // list limit, imports policy, webhook timeout, preferred languages): it loads
+    // no model and opens nothing, so it is as cheap here as at server start, and
+    // it overwrites rather than latches, so calling it on every one-shot command
+    // is safe.
     let cfg_path = data_path.join("config.toml");
-    let storage_cfg = open_ontologies::config::Config::load(&cfg_path)
-        .map(|c| c.storage)
-        .unwrap_or_default();
-    let graph = build_main_graph(&storage_cfg, data_path)?;
+    let cfg = open_ontologies::config::Config::load(&cfg_path).unwrap_or_default();
+    open_ontologies::runtime::init_from_config(&cfg);
+    let graph = build_main_graph(&cfg.storage, data_path)?;
     Ok((db, graph))
 }
 
@@ -1933,6 +2003,11 @@ async fn async_main() -> anyhow::Result<()> {
         if let Some(code) = proxy_if_daemon(&proxy_ctx, &payload, false).await? {
             std::process::exit(code);
         }
+    } else if let Some(info) = live_daemon(&proxy_ctx)
+        && let Some(why) = daemon_refuses(&cli.command, &info)
+    {
+        output_result_checked(&serde_json::json!({ "error": why }).to_string(), cli.pretty);
+        return Ok(());
     }
 
     match cli.command {
@@ -3314,9 +3389,21 @@ async fn async_main() -> anyhow::Result<()> {
             valid_at,
             as_of,
             all_versions,
+            phase_timeout_ms,
+            classify_timeout_ms,
         } => {
             use open_ontologies::reason::{InferenceTarget, Reasoner};
+            // `setup` applies `[reasoner]` from config.toml; a flag then wins
+            // over it, the same CLI > config > default order as --storage-mode
+            // (neither clock has an environment variable). The `budget` block
+            // reads these same globals, so it reports what is in force.
             let (_db, graph) = setup(&cli.data_dir)?;
+            if let Some(ms) = phase_timeout_ms {
+                open_ontologies::runtime::set_tableaux_test_timeout_ms(ms);
+            }
+            if let Some(ms) = classify_timeout_ms {
+                open_ontologies::runtime::set_classify_timeout_ms(ms);
+            }
             let request = match open_ontologies::temporal::ScopeRequest::from_args(
                 valid_at.as_deref(),
                 as_of.as_deref(),
@@ -4115,6 +4202,36 @@ mod proxy_serialization_tests {
         assert!(without.to_batch_command().is_some());
     }
 
+    #[test]
+    fn a_reasoner_budget_flag_is_never_proxied_and_a_live_daemon_refuses_it() {
+        // #339. The clocks are process-wide in the daemon, so a per-request
+        // budget cannot be honoured there; and a local run would read a
+        // different store from the one the caller loaded into the daemon.
+        let reason = |phase: Option<usize>, ceiling: Option<usize>| Commands::Reason {
+            profile: "owl-dl".into(),
+            certificate: None,
+            rules: None,
+            valid_at: None,
+            as_of: None,
+            all_versions: false,
+            phase_timeout_ms: phase,
+            classify_timeout_ms: ceiling,
+        };
+        let info = open_ontologies::daemon::DaemonInfo {
+            pid: 4242,
+            url: "http://127.0.0.1:8080".into(),
+            token: None,
+        };
+        for cmd in [reason(Some(200), None), reason(None, Some(0)), reason(Some(1), Some(2))] {
+            assert!(cmd.to_batch_command().is_none());
+            let why = daemon_refuses(&cmd, &info).expect("a live daemon must refuse it");
+            assert!(why.contains("--no-connect") && why.contains("4242"), "{why}");
+        }
+        let plain = reason(None, None);
+        assert!(plain.to_batch_command().is_some());
+        assert!(daemon_refuses(&plain, &info).is_none());
+    }
+
     /// One instance of every variant `to_batch_command` will proxy. If a new
     /// proxy-able command is added and not listed here it simply goes uncovered;
     /// nothing here passes falsely because of it.
@@ -4126,11 +4243,11 @@ mod proxy_serialization_tests {
             Commands::Stats,
             Commands::Query { query: "SELECT ?s WHERE { ?s ?p ?o }".into() },
             Commands::Lint { input: "x.ttl".into() },
-            Commands::Reason { profile: "rdfs".into(), certificate: None, rules: None, valid_at: None, as_of: None, all_versions: false },
+            Commands::Reason { profile: "rdfs".into(), certificate: None, rules: None, valid_at: None, as_of: None, all_versions: false, phase_timeout_ms: None, classify_timeout_ms: None },
             // The scoped form proxies too: a daemon-backed `reason --valid-at`
             // that silently dropped the flag would run over every version and
             // report a snapshot it did not have.
-            Commands::Reason { profile: "rdfs".into(), certificate: None, rules: None, valid_at: Some("2026-01-01".into()), as_of: None, all_versions: false },
+            Commands::Reason { profile: "rdfs".into(), certificate: None, rules: None, valid_at: Some("2026-01-01".into()), as_of: None, all_versions: false, phase_timeout_ms: None, classify_timeout_ms: None },
             Commands::Fol { out: "/tmp/fol".into(), format: "tptp".into(), smt_domain: None, clif_dialect: "iso".into(), clif_comments: "standalone".into(), goals: None, goals_skip_columns: 0 },
             Commands::FolModel { out: "/tmp/folmodel".into(), solver: "z3".into(), max_domain: 16, timeout_secs: 30, unbounded_probe: true, goals: None, goals_skip_columns: 0, checker: None },
             Commands::FolProve { out: Some("/tmp/folprove".into()), prover: "vampire".into(), timeout_secs: 30, goals: None, goals_skip_columns: 0, problem: None, proof: None },
