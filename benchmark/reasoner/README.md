@@ -94,6 +94,52 @@ expects the corpus's `pool_sample` directory at `corpora/ore2015/pool_sample`
 `<track>/classification/fileorder.txt` for the track (`el`, `dl` or
 `pure_dl`).
 
+#### Where the corpus comes from
+
+The page that used to host it is gone: `cs.ox.ac.uk/isg/tools/ORE/ore2015/` and
+`owl.cs.manchester.ac.uk/tools/ore2015/` both return 404 and there is no Wayback
+snapshot. The corpus itself is published on Zenodo, and until this note was
+added nothing in this repository said so, which made the one comparison that
+matters unreproducible and left `tests/ore_pool_round_trip` skipping with
+"needs the ORE 2015 corpus, which is not in the repository".
+
+| | |
+|---|---|
+| DOI | [`10.5281/zenodo.18578`](https://doi.org/10.5281/zenodo.18578) — "ORE 2015 Reasoner Competition Corpus" |
+| Download | 725 MB (`ore2015_sample.zip`) |
+| Extracted | ~20 GB, 1,952 files: OWL functional syntax, the largest file alone is 576 MB |
+| Licence | **CC-BY-NC-ND-4.0** — benchmark use only. No derivatives, no commercial redistribution: the individual ontologies carry their own licences on top |
+
+```bash
+mkdir -p benchmark/reasoner/corpora/ore2015
+curl -L -o /tmp/ore2015_sample.zip \
+  https://zenodo.org/api/records/18578/files/ore2015_sample.zip/content
+unzip -q /tmp/ore2015_sample.zip -d benchmark/reasoner/corpora/ore2015/
+# the archive contains pool_sample/ at its root
+python3 benchmark/reasoner/run_ore.py --selftest
+```
+
+`--selftest` needs neither the corpus nor Java: it feeds synthetic engines to the
+scoring code and checks 17 cases, including the negative controls (an engine that
+lies, a timeout, a failed load). It passes on a machine with no corpus at all, so
+a green selftest says the driver is honest and says nothing about the corpus.
+
+#### Known gap: `Convert.java` needs more jars than `setup_jars.sh` fetches
+
+`setup_jars.sh` downloads `owlapi-distribution`, HermiT and Pellet. That is
+enough to compile `Convert.java` but not to run it: the OWL API's transitive
+dependencies are missing, and the first file of any run dies with
+`NoClassDefFoundError` — observed in this order on macOS/arm64 with Java 18:
+`org.slf4j.LoggerFactory`, `javax.inject.Inject`, `com.github.benmanes.caffeine.
+cache.Caffeine`, `org.eclipse.rdf4j.model.base.AbstractValueFactory`,
+`com.carrotsearch.hppcrt.maps.ObjectObjectHashMap` (the last one is `hppcrt`, not
+`hppc`). The driver reports each as `conversion_failed` and withholds every
+timing, which is the right behaviour but reads like a reasoner failure. Adding
+`slf4j-api`, `slf4j-nop`, `javax.inject`, `guice`, `caffeine` 3.x, `rdf4j-model*`
+3.7.x, `commons-io` and `hppcrt` to `lib/` clears it. Not fixed here: the correct
+fix is to resolve the dependencies from the OWL API POM instead of pinning a list
+that goes stale.
+
 ```bash
 python3 benchmark/reasoner/run_ore.py --selftest
 python3 benchmark/reasoner/run_ore.py --track el --sort-by-size --limit 6 \
