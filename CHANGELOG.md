@@ -56,6 +56,11 @@ All notable changes to Open Ontologies are documented here.
   over values of exactly that type. Each now records the constraint in
   `skipped_constraints` with the direct path's reason and suppresses the
   verdict. W3C columns unchanged (61, 53).
+- **`sh:node` to a shape whose own `sh:datatype` the store cannot tell apart
+  is refused rather than answered.** The shape compiler refused such a
+  datatype on a property inside the referenced shape and not on the shape
+  itself, so every value the store had widened was reported. The `sh:node` is
+  now recorded as not evaluated. W3C columns unchanged.
 - **A custom `sh:severity` keeps its namespace in the JSON report** (#334).
   Every path set `severity` to the text after the last `#` of the declared
   IRI, and every reader takes a bare name as `sh:`, so W3C

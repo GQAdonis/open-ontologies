@@ -2831,7 +2831,18 @@ fn compile_node_shape(
                 "EXISTS {{ ?{var} <http://www.w3.org/1999/02/22-rdf-syntax-ns#type>/<http://www.w3.org/2000/01/rdf-schema#subClassOf>* <{}> }}",
                 strip_angle_brackets(obj)
             )),
-            "datatype" => clauses.push(datatype_conforms(&strip_angle_brackets(obj), var)),
+            "datatype" => {
+                // Refused for the same reason as on a property inside the
+                // shape, below: the store cannot tell the datatype from the
+                // one it derives from. Only the property form was guarded, so
+                // `sh:node` to a shape declaring `sh:datatype xsd:int` itself
+                // reported every value the store had widened to xsd:integer.
+                let dt = strip_angle_brackets(obj);
+                if datatype_is_indistinguishable_in_store(&dt) {
+                    return None;
+                }
+                clauses.push(datatype_conforms(&dt, var))
+            }
             "nodeKind" => clauses.push(node_kind_test(&strip_angle_brackets(obj), var)?),
             _ => return None,
         }

@@ -175,6 +175,19 @@ fn a_qualified_shape_naming_an_unpreserved_datatype_is_not_answered() {
     );
 }
 
+/// `sh:node` to a shape whose OWN constraint is the datatype. The compiler
+/// already refused the same datatype on a property inside the referenced shape
+/// and not on the shape itself.
+#[test]
+fn a_node_shape_reference_naming_an_unpreserved_datatype_is_not_answered() {
+    refused(
+        "ex:S a sh:NodeShape ; sh:targetClass ex:Profile ;
+           sh:property [ sh:path ex:passes ; sh:node ex:Count ] .
+         ex:Count a sh:NodeShape ; sh:datatype xsd:nonNegativeInteger .",
+        "sh:node",
+    );
+}
+
 /// The guard must not swallow the decidable members: the same four paths over
 /// `xsd:integer` and `xsd:string` still give a verdict and still catch a value
 /// that matches none of them.
